@@ -29,14 +29,45 @@ import sys
 import threading
 import time
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 # Third-Party
 import pytest
 
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-BASE_URL = os.getenv("MCP_CLI_BASE_URL", "http://127.0.0.1:8080")  # IPv4 explicit — `localhost` resolves IPv6-first under the test conftest's getaddrinfo stub, which docker-compose doesn't bind
+def _prefer_ipv4_localhost(url: str) -> str:
+    """Rewrite a ``localhost`` host in ``url`` to ``127.0.0.1``.
+
+    ``localhost`` resolves IPv6-first (``::1``) under the test conftest's
+    ``getaddrinfo`` stub (and on many real hosts), but docker-compose only
+    publishes the gateway port on IPv4. An IPv6-first async client
+    (httpx/FastMCP) then stalls on the unreachable ``::1`` until the init
+    timeout fires, surfacing as a deterministic MCP ``initialize`` handshake
+    failure (fastmcp ``client.py`` ``Failed to initialize server session``).
+    The sync ``httpx.get`` reachability probe below does not hit this, so the
+    suite reports errors rather than skips — see issue #5162.
+
+    Pinning the host to ``127.0.0.1`` avoids the stall whether the URL comes
+    from the IPv4 default or from a ``MCP_CLI_BASE_URL`` that the documented
+    repro steps set to ``http://localhost:8080``.
+    """
+    parts = urlsplit(url)
+    if parts.hostname != "localhost":
+        return url
+    userinfo = ""
+    if parts.username:
+        userinfo = parts.username
+        if parts.password:
+            userinfo += f":{parts.password}"
+        userinfo += "@"
+    port = f":{parts.port}" if parts.port else ""
+    return urlunsplit(parts._replace(netloc=f"{userinfo}127.0.0.1{port}"))
+
+
+BASE_URL = _prefer_ipv4_localhost(os.getenv("MCP_CLI_BASE_URL", "http://127.0.0.1:8080"))
 JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")
 ADMIN_EMAIL = os.getenv("PLATFORM_ADMIN_EMAIL", "admin@example.com")
 TOKEN_EXPIRY = os.getenv("MCP_CLI_TOKEN_EXPIRY", "60")  # minutes

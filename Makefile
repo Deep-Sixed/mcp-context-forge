@@ -811,7 +811,7 @@ smoketest:
 	@echo "✅ Smoketest passed!"
 
 test-mcp-protocol-e2e: uv  ## MCP protocol E2E via FastMCP client (K=<filter> to pick one)
-	@echo "🔌 Running MCP protocol E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+	@echo "🔌 Running MCP protocol E2E tests against $${MCP_CLI_BASE_URL:-http://127.0.0.1:8080}..."
 	@echo "   Env: MCP_CLI_BASE_URL (gateway URL)  JWT_SECRET_KEY  PLATFORM_ADMIN_EMAIL"
 	@echo "   Timeout: $${MCP_E2E_CLIENT_TIMEOUT:-5.0}s per client operation (override MCP_E2E_CLIENT_TIMEOUT)"
 	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
@@ -847,7 +847,7 @@ test-protocol-compliance-matrix: uv  ## MCP compliance matrix across every runna
 	@$(UV_BIN) run python scripts/compliance_matrix.py $(MATRIX_ARGS)
 
 test-mcp-rbac: uv  ## RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
-	@echo "🔐 Running RBAC + multi-transport MCP protocol tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+	@echo "🔐 Running RBAC + multi-transport MCP protocol tests against $${MCP_CLI_BASE_URL:-http://127.0.0.1:8080}..."
 	@echo "   Requires: docker-compose stack with SSE gateway registered"
 	@$(UV_BIN) run playwright install --with-deps chromium >/dev/null
 	@$(UV_BIN) run pytest -p playwright tests/live_gateway/mcp/test_mcp_rbac_transport.py -v -s --tb=short \
@@ -855,28 +855,28 @@ test-mcp-rbac: uv  ## RBAC + multi-transport MCP protocol tests (needs live gate
 	@echo "✅ MCP RBAC transport tests passed!"
 
 test-mcp-access-matrix: uv  ## Detailed Rust MCP role/access matrix test with strong tool/resource/prompt sentinels
-	@echo "🧪 Running MCP role/access matrix tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+	@echo "🧪 Running MCP role/access matrix tests against $${MCP_CLI_BASE_URL:-http://127.0.0.1:8080}..."
 	@echo "   Requires: docker-compose stack rebuilt in Rust edge/full mode"
 	@$(UV_BIN) run pytest tests/live_gateway/e2e_rust/test_mcp_access_matrix.py -v -s --tb=short \
 		|| { echo "❌ MCP role/access matrix tests failed!"; exit 1; }
 	@echo "✅ MCP role/access matrix tests passed!"
 
 test-mcp-plugin-parity: uv  ## MCP plugin parity E2E for current Python or Rust stack using a test-specific plugin config
-	@echo "🧪 Running MCP plugin parity tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+	@echo "🧪 Running MCP plugin parity tests against $${MCP_CLI_BASE_URL:-http://127.0.0.1:8080}..."
 	@echo "   Requires: stack started with PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml"
 	@$(UV_BIN) run pytest tests/live_gateway/mcp/test_mcp_plugin_parity.py -v -s --tb=short \
 		|| { echo "❌ MCP plugin parity tests failed!"; exit 1; }
 	@echo "✅ MCP plugin parity tests passed!"
 
 test-mcp-session-isolation: uv  ## MCP session/auth isolation tests for the Rust public transport path
-	@echo "🧪 Running MCP session/auth isolation tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+	@echo "🧪 Running MCP session/auth isolation tests against $${MCP_CLI_BASE_URL:-http://127.0.0.1:8080}..."
 	@echo "   Requires: docker-compose stack rebuilt in Rust edge/full mode"
 	@$(UV_BIN) run pytest tests/live_gateway/e2e_rust/test_mcp_session_isolation.py -v -s --tb=short \
 		|| { echo "❌ MCP session/auth isolation tests failed!"; exit 1; }
 	@echo "✅ MCP session/auth isolation tests passed!"
 
 test-e2e-sso: uv  ## E2E tests requiring a live SSO identity provider (Keycloak or Entra ID)
-	@echo "🔐 Running SSO-dependent E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+	@echo "🔐 Running SSO-dependent E2E tests against $${MCP_CLI_BASE_URL:-http://127.0.0.1:8080}..."
 	@echo "   Requires one of:"
 	@echo "     - Keycloak: 'docker compose --profile sso up -d' (for test_oauth_jwks_e2e.py)"
 	@echo "     - Entra ID: AZURE_CLIENT_ID/AZURE_CLIENT_SECRET/AZURE_TENANT_ID env vars (for test_entra_id_integration.py)"
@@ -888,7 +888,7 @@ test-live-gateway: uv  ## Run ALL live-gateway tests (mcp + sso + protocol_compl
 	@echo "🌐 Running all tests in tests/live_gateway/ ..."
 	@echo "   Requires: live ContextForge gateway (typically 'make testing-up') and any"
 	@echo "             extra services per subsuite — see tests/live_gateway/README.md."
-	@echo "   Tests probe BASE_URL ($${MCP_CLI_BASE_URL:-http://localhost:8080}) and self-skip when unreachable."
+	@echo "   Tests probe BASE_URL ($${MCP_CLI_BASE_URL:-http://127.0.0.1:8080}) and self-skip when unreachable."
 	@$(UV_BIN) run --extra plugins pytest -p playwright tests/live_gateway/ -v --tb=short \
 		|| { echo "❌ Live-gateway test suite failed!"; exit 1; }
 	@echo "✅ Live-gateway test suite finished."
