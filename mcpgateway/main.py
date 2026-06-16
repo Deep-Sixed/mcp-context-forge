@@ -168,6 +168,7 @@ from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictE
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import CompletionError, CompletionService
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError, TemplateValidationError
+from mcpgateway.services.dataplane_publisher import DataplanePublisherService
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayError, GatewayLookupConflictError, GatewayNameConflictError, GatewayNotFoundError
@@ -1322,6 +1323,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     aggregation_loop_task: Optional[asyncio.Task] = None
     aggregation_backfill_task: Optional[asyncio.Task] = None
     siem_export_service: Optional[Any] = None
+    dataplane_publisher: Optional[Any] = None
 
     # Initialize logging service FIRST to ensure all logging goes to dual output
     await logging_service.initialize()
@@ -1663,6 +1665,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         runtime_state_coordinator = get_runtime_state_coordinator()
         await runtime_state_coordinator.start()
 
+        # Initialize experimental dataplane publisher if enabled
+        if settings.dataplane_publisher:
+            dataplane_publisher = DataplanePublisherService()
+            await dataplane_publisher.start()
+            logger.info("Dataplane publisher initialized")
+
         # Reconfigure uvicorn loggers after startup to capture access logs in dual output
         logging_service.configure_uvicorn_after_startup()
 
@@ -1850,6 +1858,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         # Shutdown shared HTTP client (after services, before Redis)
         await SharedHttpClient.shutdown()
+
+        # Shutdown dataplane publisher if it was initialized
+        if dataplane_publisher is not None:
+            try:
+                await dataplane_publisher.shutdown()
+                logger.info("Dataplane publisher shutdown complete")
+            except Exception as e:
+                logger.error(f"Error shutting down dataplane publisher: {str(e)}")
 
         # Close Redis client last (after all services that use it)
         await close_redis_client()
@@ -2844,10 +2860,10 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
 
 class MCPPathRewriteMiddleware:
     """
-    Middleware that rewrites paths ending with '/mcp' to '/mcp/', after performing authentication.
+    Middleware that rewrites MCP paths to '/mcp/', after performing authentication.
 
+    - Rewrites exact '/mcp' to '/mcp/' to prevent Starlette Mount 307 redirects.
     - Rewrites paths like '/servers/<server_id>/mcp' to '/mcp/'.
-    - Only paths ending with '/mcp' or '/mcp/' (but not exactly '/mcp' or '/mcp/') are rewritten.
     - Authentication is performed before any path rewriting.
     - If authentication fails, the request is not processed further.
     - All other requests are passed through without change.
@@ -2987,13 +3003,28 @@ class MCPPathRewriteMiddleware:
         # Skip rewriting for well-known URIs (RFC 9728 OAuth metadata, etc.)
         # These paths may end with /mcp but should not be rewritten to the MCP transport
         if not app_path.startswith("/.well-known/"):
-            if (app_path.endswith("/mcp") and app_path != "/mcp") or (app_path.endswith("/mcp/") and app_path != "/mcp/"):
-                # SECURITY: Only rewrite recognised MCP paths — /servers/{id}/mcp.
+            # Rewrite /mcp to /mcp/ to prevent Starlette Mount from emitting 307 redirect
+            # Also rewrite /servers/{id}/mcp to /mcp/
+            if app_path == "/mcp" or app_path.endswith("/mcp") or app_path.endswith("/mcp/"):
+                # SECURITY: Only rewrite recognised MCP paths — exact /mcp or /servers/{id}/mcp.
                 # Arbitrary prefixes (e.g. /foo/mcp) must NOT be rewritten to
                 # /mcp/ as that would expose the global MCP transport under
                 # undocumented aliases, broadening the externally reachable
                 # route surface.
-                if app_path.startswith("/servers/"):
+                if app_path == "/mcp" or app_path == "/mcp/":
+                    # Exact /mcp or /mcp/ - rewrite to /mcp/ to prevent 307 redirect
+                    new_path = f"{root_path}/mcp/" if root_path else "/mcp/"
+                    scope["path"] = new_path
+                    # Update raw_path to keep it aligned with path
+                    # ASGI requires raw_path to be latin-1 encodable
+                    try:
+                        scope["raw_path"] = new_path.encode("latin-1")
+                    except UnicodeEncodeError:
+                        # Non-latin-1 characters in root_path - skip raw_path update
+                        logger.warning("non-latin-1 raw_path skipped for %s", new_path)
+                    await self.application(scope, receive, send)
+                    return
+                elif app_path.startswith("/servers/"):
                     # Validate that a non-empty server_id segment is present.
                     # Without this check, paths like /servers//mcp (empty ID)
                     # would be rewritten and silently fall through (#3891).
@@ -3002,15 +3033,23 @@ class MCPPathRewriteMiddleware:
                         response = ORJSONResponse({"detail": "Invalid server identifier"}, status_code=404)
                         await response(scope, receive, send)
                         return
-                else:
-                    # Not a /servers/ path — do not rewrite, pass through
+                    # Rewrite to /mcp/ and continue through middleware (lets CORSMiddleware handle preflight)
+                    # Preserve root_path prefix when rewriting
+                    new_path = f"{root_path}/mcp/" if root_path else "/mcp/"
+                    scope["path"] = new_path
+                    # Update raw_path to keep it aligned with path
+                    # ASGI requires raw_path to be latin-1 encodable
+                    try:
+                        scope["raw_path"] = new_path.encode("latin-1")
+                    except UnicodeEncodeError:
+                        # Non-latin-1 characters in root_path - skip raw_path update
+                        logger.warning("non-latin-1 raw_path skipped for %s", new_path)
                     await self.application(scope, receive, send)
                     return
-                # Rewrite to /mcp/ and continue through middleware (lets CORSMiddleware handle preflight)
-                # Preserve root_path prefix when rewriting
-                scope["path"] = f"{root_path}/mcp/" if root_path else "/mcp/"
-                await self.application(scope, receive, send)
-                return
+                else:
+                    # Not exact /mcp and not a /servers/ path — do not rewrite, pass through
+                    await self.application(scope, receive, send)
+                    return
         await self.application(scope, receive, send)
 
 
@@ -7395,8 +7434,14 @@ async def remove_root(
         Status message indicating result.
     """
     logger.debug(f"User '{SecurityValidator.sanitize_log_message(str(user))}' requested to remove root with URI: {uri}")
-    await root_service.remove_root(uri)
-    return {"status": "success", "message": f"Root {uri} removed"}
+    try:
+        await root_service.remove_root(uri)
+        return {"status": "success", "message": f"Root {uri} removed"}
+    except RootServiceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to remove root {uri}: {e}")
+        raise HTTPException(status_code=500, detail="Internal error removing root")
 
 
 ##################
@@ -10638,6 +10683,10 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 # Resource not found in the gateway
                 logger.error("Resource not found: %s", uri)
                 raise JSONRPCError(-32002, f"Resource not found: {uri}", {"uri": uri})
+            except ResourceError as e:
+                # Generic resource error (e.g., ambiguous URI, proxy failure)
+                logger.error("RPC error: %s", str(e))
+                raise JSONRPCError(-32000, f"Resource read failed: {e}", {"uri": uri})
             # Release transaction after resources/read completes
             db.commit()
             db.close()
@@ -10711,19 +10760,28 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             # Get plugin contexts from request.state for cross-hook sharing
             plugin_context_table = getattr(request.state, "plugin_context_table", None)
             plugin_global_context = getattr(request.state, "plugin_global_context", None)
-            result = await prompt_service.get_prompt(
-                db,
-                name,
-                arguments,
-                user=auth_user_email,
-                server_id=server_id,
-                token_teams=auth_token_teams,
-                plugin_context_table=plugin_context_table,
-                plugin_global_context=plugin_global_context,
-                _meta_data=meta_data,
-            )
-            if hasattr(result, "model_dump"):
-                result = result.model_dump(by_alias=True, exclude_none=True)
+            try:
+                result = await prompt_service.get_prompt(
+                    db,
+                    name,
+                    arguments,
+                    user=auth_user_email,
+                    server_id=server_id,
+                    token_teams=auth_token_teams,
+                    plugin_context_table=plugin_context_table,
+                    plugin_global_context=plugin_global_context,
+                    _meta_data=meta_data,
+                )
+                if hasattr(result, "model_dump"):
+                    result = result.model_dump(by_alias=True, exclude_none=True)
+            except PromptNotFoundError as e:
+                # Prompt not found in the gateway
+                logger.error("Prompt not found: %s", name)
+                raise JSONRPCError(-32002, f"Prompt not found: {name}", {"name": name})
+            except PromptError as e:
+                # Generic prompt error (e.g., validation failure)
+                logger.error("RPC error: %s", str(e))
+                raise JSONRPCError(-32000, f"Prompt retrieval failed: {e}", {"name": name})
             # Release transaction after prompts/get completes
             db.commit()
             db.close()
@@ -11318,7 +11376,16 @@ async def set_log_level(request: Request, user=Depends(get_current_user_with_per
     """
     logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} requested to set log level")
     body = await _read_request_json(request)
-    level = LogLevel(body["level"])
+    try:
+        level_value = body["level"]
+        # Accept both uppercase and lowercase
+        if isinstance(level_value, str):
+            level_value = level_value.lower()
+        level = LogLevel(level_value)
+    except KeyError:
+        raise HTTPException(status_code=422, detail="Invalid log level: 'level' field is required")
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid log level: {e}")
     await logging_service.set_level(level)
 
 
