@@ -19,12 +19,33 @@ function makeComponent() {
 
 // ─── Setup / teardown ─────────────────────────────────────────────────────────
 
+let localStorageMock;
+
 beforeEach(() => {
-  localStorage.clear();
+  // Create a fresh localStorage mock for each test
+  localStorageMock = (() => {
+    let store = {};
+    return {
+      getItem: (key) => store[key] || null,
+      setItem: (key, value) => {
+        store[key] = String(value);
+      },
+      removeItem: (key) => {
+        delete store[key];
+      },
+      clear: () => {
+        store = {};
+      },
+    };
+  })();
+
+  // Stub global localStorage
+  vi.stubGlobal("localStorage", localStorageMock);
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   delete window.Admin;
 });
 
@@ -119,7 +140,8 @@ describe("darkMode $watch callback", () => {
   });
 
   test("calls Admin.logRestrictedContext when localStorage.setItem throws", () => {
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    // Spy on the mocked localStorage's setItem method
+    vi.spyOn(localStorageMock, "setItem").mockImplementation(() => {
       throw new Error("QuotaExceededError");
     });
     const logRestrictedContext = vi.fn();
@@ -131,7 +153,8 @@ describe("darkMode $watch callback", () => {
   });
 
   test("does not throw on write error when Admin is absent", () => {
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    // Spy on the mocked localStorage's setItem method
+    vi.spyOn(localStorageMock, "setItem").mockImplementation(() => {
       throw new Error("QuotaExceededError");
     });
     delete window.Admin;

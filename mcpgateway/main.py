@@ -3011,7 +3011,7 @@ class MCPPathRewriteMiddleware:
                 # /mcp/ as that would expose the global MCP transport under
                 # undocumented aliases, broadening the externally reachable
                 # route surface.
-                if app_path == "/mcp" or app_path == "/mcp/":
+                if app_path in {"/mcp", "/mcp/"}:
                     # Exact /mcp or /mcp/ - rewrite to /mcp/ to prevent 307 redirect
                     new_path = f"{root_path}/mcp/" if root_path else "/mcp/"
                     scope["path"] = new_path
@@ -3024,7 +3024,7 @@ class MCPPathRewriteMiddleware:
                         logger.warning("non-latin-1 raw_path skipped for %s", new_path)
                     await self.application(scope, receive, send)
                     return
-                elif app_path.startswith("/servers/"):
+                if app_path.startswith("/servers/"):
                     # Validate that a non-empty server_id segment is present.
                     # Without this check, paths like /servers//mcp (empty ID)
                     # would be rewritten and silently fall through (#3891).
@@ -3046,10 +3046,9 @@ class MCPPathRewriteMiddleware:
                         logger.warning("non-latin-1 raw_path skipped for %s", new_path)
                     await self.application(scope, receive, send)
                     return
-                else:
-                    # Not exact /mcp and not a /servers/ path — do not rewrite, pass through
-                    await self.application(scope, receive, send)
-                    return
+                # Not exact /mcp and not a /servers/ path — do not rewrite, pass through
+                await self.application(scope, receive, send)
+                return
         await self.application(scope, receive, send)
 
 
@@ -10774,7 +10773,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 )
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
-            except PromptNotFoundError as e:
+            except PromptNotFoundError:
                 # Prompt not found in the gateway
                 logger.error("Prompt not found: %s", name)
                 raise JSONRPCError(-32002, f"Prompt not found: {name}", {"name": name})
