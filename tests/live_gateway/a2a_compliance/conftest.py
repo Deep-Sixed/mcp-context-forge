@@ -402,3 +402,289 @@ def raw_dispatch_url(
         sid = request.getfixturevalue("server_id")
         return f"{gateway_base_url}/servers/{sid}/a2a/{registered_agent_name}"
     raise AssertionError(f"unsupported gap-closure target {gap_closure_target!r}")
+
+
+# ───────────────────────────────────────────────────────────────────────
+# Plan Amendment I.2 — RBAC + team-scoped visibility fixtures (closes
+# the F1 deferred-fixture-work addendum). These power the two previously
+# skipped tests in v1_0_0/test_rbac_extra.py: wrong-team Layer-1
+# visibility hide (HTTP 404) and per-permission RBAC via a non-admin
+# user with only ``a2a.read`` granted (HTTP 200 on
+# ``GetExtendedAgentCard``, proves the route did NOT use a route-level
+# ``@require_permission("a2a.invoke")``).
+#
+# Both fixtures self-skip on gateway-unreachable / API-failure so a
+# developer running the harness without a live gateway sees a clean
+# skip rather than a cascade of errors.
+# ───────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture(scope="session")
+def team_scoped_agent_name() -> str:
+    """Canonical name of the team-scoped echo agent for the I.2 fixtures.
+
+    Distinct from ``registered_agent_name`` so the public agent and the
+    team-scoped agent can coexist on the gateway without name collisions.
+    Overridable via ``A2A_COMPLIANCE_TEAM_AGENT_NAME``.
+    """
+    return os.getenv("A2A_COMPLIANCE_TEAM_AGENT_NAME", "a2a-echo-agent-team-a")
+
+
+@pytest.fixture(scope="module")
+def team_scoped_agent_id(
+    gateway_base_url: str,
+    auth_token: str,
+    team_scoped_agent_name: str,
+    echo_agent_base_url: str,
+) -> str:
+    """Module-scoped: ensure a team-scoped echo agent exists, return its UUID.
+
+    Module scope (not session) so the dependency on the module-scoped
+    ``echo_agent_base_url`` resolves cleanly. The gateway and team
+    creation work is still idempotent — subsequent modules within the
+    same session reuse the existing team/agent rows.
+
+    Plan Amendment I.2: drives the Layer-1 visibility-hide test. Creates
+    (or reuses) a real team named ``a2a-compliance-team-a`` and registers
+    a team-scoped echo agent under it with ``visibility="team"``. The
+    agent is functionally identical to the public ``registered_agent_id``
+    fixture's agent — it differs only in visibility scope so the
+    wrong-team-token test can assert HTTP 404 collapse per D14.
+
+    Idempotent: re-lists agents + teams before creating, so a previous
+    run's leftovers are reused rather than colliding on the unique
+    name constraint.
+
+    Skips the session gracefully when the gateway is unreachable so
+    developers running the harness without a live gateway see a clean
+    skip rather than a cascade of connection errors.
+
+    Args:
+        gateway_base_url: Gateway base URL.
+        auth_token: Admin JWT (admin bypass needed to set ``team_id``).
+        team_scoped_agent_name: Agent name from
+            :func:`team_scoped_agent_name`.
+        echo_agent_base_url: Reference echo agent's base URL — used as
+            the team-scoped agent's ``endpoint_url`` so it actually
+            responds to dispatch.
+
+    Returns:
+        UUID of the team-scoped agent.
+    """
+    team_name = os.getenv("A2A_COMPLIANCE_TEAM_NAME", "a2a-compliance-team-a")
+
+    try:
+        probe = httpx.get(f"{gateway_base_url}/health", timeout=httpx.Timeout(5.0))
+    except httpx.HTTPError as exc:
+        pytest.skip(f"Gateway unreachable at {gateway_base_url}: {exc}")
+    if probe.status_code >= 500:
+        pytest.skip(f"Gateway at {gateway_base_url} returned {probe.status_code}")
+
+    headers = {"Authorization": f"Bearer {auth_token}", "Content-Type": "application/json"}
+
+    # Step 1: ensure the team exists.
+    list_teams = httpx.get(f"{gateway_base_url}/teams", headers=headers, timeout=httpx.Timeout(10.0))
+    team_id = None
+    if list_teams.status_code == 200:
+        body = list_teams.json()
+        teams = body.get("items", body) if isinstance(body, dict) else body
+        if isinstance(teams, list):
+            for t in teams:
+                if isinstance(t, dict) and t.get("name") == team_name:
+                    team_id = str(t["id"])
+                    break
+
+    if team_id is None:
+        create_team_resp = httpx.post(
+            f"{gateway_base_url}/teams/",
+            headers=headers,
+            json={"name": team_name, "description": "A2A I.2 visibility-hide fixture team"},
+            timeout=httpx.Timeout(15.0),
+        )
+        if create_team_resp.status_code in (200, 201):
+            team_id = str(create_team_resp.json()["id"])
+        else:
+            pytest.skip(f"Could not create team {team_name!r} on gateway {gateway_base_url} " f"(POST /teams/ status {create_team_resp.status_code}): {create_team_resp.text[:200]}")
+
+    # Step 2: ensure the team-scoped agent exists under that team.
+    list_agents = httpx.get(f"{gateway_base_url}/a2a", headers=headers, timeout=httpx.Timeout(10.0))
+    if list_agents.status_code == 200:
+        body = list_agents.json()
+        agents = body.get("items", body) if isinstance(body, dict) else body
+        if isinstance(agents, list):
+            for a in agents:
+                if isinstance(a, dict) and a.get("name") == team_scoped_agent_name:
+                    return str(a["id"])
+
+    payload = {
+        "name": team_scoped_agent_name,
+        "description": "A2A I.2 team-scoped echo agent (visibility-hide test fixture)",
+        "endpoint_url": echo_agent_base_url,
+        "agent_type": "jsonrpc",
+        "protocol_version": "1.0.0",
+        "capabilities": {"streaming": True, "extendedAgentCard": True},
+        "visibility": "team",
+        "team_id": team_id,
+    }
+    create_resp = httpx.post(f"{gateway_base_url}/a2a", headers=headers, json=payload, timeout=httpx.Timeout(15.0))
+    if create_resp.status_code in (200, 201):
+        return str(create_resp.json()["id"])
+
+    if create_resp.status_code == 409:
+        list_resp2 = httpx.get(f"{gateway_base_url}/a2a", headers=headers, timeout=httpx.Timeout(10.0))
+        if list_resp2.status_code == 200:
+            body = list_resp2.json()
+            agents = body.get("items", body) if isinstance(body, dict) else body
+            if isinstance(agents, list):
+                for a in agents:
+                    if isinstance(a, dict) and a.get("name") == team_scoped_agent_name:
+                        return str(a["id"])
+
+    pytest.skip(f"Could not register team-scoped agent {team_scoped_agent_name!r} on gateway " f"{gateway_base_url} (POST /a2a status {create_resp.status_code}): {create_resp.text[:200]}")
+
+
+@pytest.fixture(scope="session")
+def wrong_team_auth_token() -> str:
+    """Session-scoped: non-admin JWT carrying a team UUID that does NOT
+    overlap with the team-scoped agent's team.
+
+    Plan Amendment I.2: drives the Layer-1 visibility-hide test
+    (:func:`tests.live_gateway.a2a_compliance.v1_0_0.test_rbac_extra.test_team_scoped_agent_wrong_team_returns_404`).
+    The token carries ``teams=["<fake-team-uuid>"]`` which deliberately
+    won't match the real team-a UUID. Layer-1 token scoping filters
+    the team-scoped agent out, so the dispatch returns HTTP 404
+    instead of 403 (D11 — visibility hides, never 403s).
+
+    Uses a structurally valid UUID for the team value so any downstream
+    validation that expects UUID shape doesn't reject the token before
+    it reaches the visibility check.
+    """
+    return make_test_jwt(email="wrong-team-user@example.com", is_admin=False, teams=["00000000-0000-0000-0000-000000000fff"])
+
+
+@pytest.fixture(scope="session")
+def a2a_read_only_token(gateway_base_url: str, auth_token: str) -> str:
+    """Session-scoped: JWT for a non-admin user with only ``a2a.read`` granted.
+
+    Plan Amendment I.2: drives the per-permission test
+    (:func:`tests.live_gateway.a2a_compliance.v1_0_0.test_rbac_extra.test_extended_card_with_read_permission_returns_200`).
+    Proves the dispatch route did NOT use a route-level
+    ``@require_permission("a2a.invoke")`` decorator that would 403
+    every ``GetExtendedAgentCard`` call (Oracle v3 #1).
+
+    Fixture flow:
+
+    1. Create the non-admin user via ``POST /auth/email/admin/users``
+       (reuses on 409 conflict).
+    2. Look up the ``platform_viewer`` system role via
+       ``GET /rbac/roles?scope=global``. ``platform_viewer`` carries
+       ``a2a.read`` but NOT ``a2a.invoke`` (see
+       :mod:`mcpgateway.bootstrap_db` default-role table).
+    3. Assign that role globally to the user via
+       ``POST /rbac/users/{email}/roles``.
+    4. Return a JWT bound to the user.
+
+    Skips cleanly on any API failure — the surrounding tests then
+    skip too, mirroring the existing fixture pattern.
+
+    Args:
+        gateway_base_url: Gateway base URL.
+        auth_token: Admin JWT — only an admin can call
+            ``admin.user_management``-gated endpoints.
+
+    Returns:
+        JWT string for the non-admin read-only user.
+    """
+    user_email = os.getenv("A2A_COMPLIANCE_READ_ONLY_EMAIL", "a2a-read-only@example.com")
+    user_password = "DummyReadOnlyP@ss"  # pragma: allowlist secret
+
+    try:
+        probe = httpx.get(f"{gateway_base_url}/health", timeout=httpx.Timeout(5.0))
+    except httpx.HTTPError as exc:
+        pytest.skip(f"Gateway unreachable at {gateway_base_url}: {exc}")
+    if probe.status_code >= 500:
+        pytest.skip(f"Gateway at {gateway_base_url} returned {probe.status_code}")
+
+    headers = {"Authorization": f"Bearer {auth_token}", "Content-Type": "application/json"}
+
+    # Step 1: create the non-admin user (idempotent on 409).
+    create_user_resp = httpx.post(
+        f"{gateway_base_url}/auth/email/admin/users",
+        headers=headers,
+        json={"email": user_email, "password": user_password, "full_name": "A2A Read-Only Test User", "is_admin": False, "is_active": True},
+        timeout=httpx.Timeout(15.0),
+    )
+    if create_user_resp.status_code not in (200, 201, 409):
+        pytest.skip(f"Could not create user {user_email!r} on gateway {gateway_base_url} " f"(POST /auth/email/admin/users status {create_user_resp.status_code}): {create_user_resp.text[:200]}")
+
+    # Step 2: look up the platform_viewer system role (scope=global).
+    list_roles_resp = httpx.get(f"{gateway_base_url}/rbac/roles", headers=headers, params={"scope": "global"}, timeout=httpx.Timeout(10.0))
+    if list_roles_resp.status_code != 200:
+        pytest.skip(f"Could not list global roles on gateway {gateway_base_url} " f"(GET /rbac/roles?scope=global status {list_roles_resp.status_code}): {list_roles_resp.text[:200]}")
+
+    body = list_roles_resp.json()
+    roles_payload = body.get("items", body) if isinstance(body, dict) else body
+    platform_viewer_id = None
+    if isinstance(roles_payload, list):
+        for r in roles_payload:
+            if isinstance(r, dict) and r.get("name") == "platform_viewer":
+                platform_viewer_id = str(r["id"])
+                break
+
+    if platform_viewer_id is None:
+        pytest.skip(f"platform_viewer system role not found on gateway {gateway_base_url} — has bootstrap_db run?")
+
+    # Step 3: assign the role to the user (idempotent — re-assignment is
+    # harmless; the role service deduplicates).
+    assign_resp = httpx.post(
+        f"{gateway_base_url}/rbac/users/{user_email}/roles",
+        headers=headers,
+        json={"role_id": platform_viewer_id, "scope": "global"},
+        timeout=httpx.Timeout(15.0),
+    )
+    if assign_resp.status_code not in (200, 201, 409):
+        pytest.skip(
+            f"Could not assign platform_viewer role to {user_email!r} on gateway " f"{gateway_base_url} (POST /rbac/users/.../roles status {assign_resp.status_code}): {assign_resp.text[:200]}"
+        )
+
+    # Step 4: JWT bound to the user. Non-admin, empty teams (public-only
+    # Layer 1) — platform_viewer is a global-scope role so the RBAC
+    # check resolves through the global role assignment, not via team.
+    return make_test_jwt(email=user_email, is_admin=False)
+
+
+@pytest.fixture
+def team_scoped_raw_dispatch_url(
+    gap_closure_target: str,
+    gateway_base_url: str,
+    team_scoped_agent_name: str,
+    team_scoped_agent_id: str,  # noqa: ARG001 — triggers team-scoped agent registration
+) -> str:
+    """Target-aware dispatch URL for the team-scoped agent.
+
+    Plan Amendment I.2: parallel to :func:`raw_dispatch_url` but
+    pointed at the team-scoped agent rather than the public one. Only
+    the gateway-proxy form is exercised — the team-scoped agent is
+    not bound to the v-server bundle from :func:`server_id`, so the
+    v-server URL would 404 for all callers regardless of team. The
+    wire-level visibility-hide contract is the same on either URL
+    family per D14, so testing it on gateway_proxy is sufficient.
+
+    Reference and gateway_virtual targets skip — see the per-test
+    body for the explicit skip reason.
+
+    Args:
+        gap_closure_target: Current parametrize cell.
+        gateway_base_url: Gateway base URL.
+        team_scoped_agent_name: Team-scoped agent name.
+        team_scoped_agent_id: Unused directly, but referencing it
+            triggers the team-scoped agent registration before URL
+            construction so the test's request actually has a target.
+
+    Returns:
+        Dispatch URL for the team-scoped agent on the gateway-proxy
+        form, or an empty string when the test will skip anyway.
+    """
+    if gap_closure_target == "gateway_proxy":
+        return f"{gateway_base_url}/a2a/{team_scoped_agent_name}"
+    return ""

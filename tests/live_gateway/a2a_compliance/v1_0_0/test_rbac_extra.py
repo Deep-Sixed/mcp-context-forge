@@ -127,7 +127,8 @@ async def test_no_invoke_permission_returns_403(
 
 @pytest.mark.asyncio
 async def test_team_scoped_agent_wrong_team_returns_404(
-    raw_dispatch_url: str,
+    team_scoped_raw_dispatch_url: str,
+    wrong_team_auth_token: str,
     gap_closure_target: str,
 ) -> None:
     """Team-scoped agent + wrong-team token MUST yield HTTP 404.
@@ -136,26 +137,30 @@ async def test_team_scoped_agent_wrong_team_returns_404(
     team sees the same wire outcome as if the agent did not exist at
     all -- this prevents enumeration attacks.
 
-    Full setup needs:
-    1. A team-scoped agent registered to ``team-a``.
-    2. A token with ``teams=["team-b"]`` (no overlap).
-
-    The T28 Part A ``registered_agent_id`` fixture registers a PUBLIC
-    agent (no team scoping). T28 Part B (commit ``2bc20d26d``) added
-    the v-server bundling fixture but did NOT add a team-scoped agent
-    + wrong-team token pair. This test stays skipped pending a follow-up
-    fixture-work commit that registers a ``team-a`` agent and yields a
-    ``teams=["team-b"]`` token; once that lands, the wire-level contract
-    (HTTP 404, NOT 403) becomes a live assertion.
+    Plan Amendment I.2 wired up the team-scoped agent + wrong-team
+    token fixtures (see conftest.py). The test exercises the
+    gateway_proxy URL family only — the team-scoped agent is not
+    bound to the v-server bundle from ``server_id``, so the
+    v-server URL would 404 for all callers regardless of team. The
+    wire-level visibility-hide contract is the same on either URL
+    family per D14, so the gateway_proxy column is sufficient
+    coverage.
     """
     if gap_closure_target == "reference":
         pytest.skip("Gateway-only behavior: echo agent has no team-scoped visibility")
-    pytest.skip("TODO: team-scoped agent + wrong-team token fixtures needed; see plan F1 deferred-fixture-work addendum")
+    if gap_closure_target == "gateway_virtual":
+        pytest.skip("Team-scoped agent not bound to v-server bundle; D14 contract covered on gateway_proxy column")
+
+    headers = {**_base_headers(), "Authorization": f"Bearer {wrong_team_auth_token}"}
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        response = await client.post(team_scoped_raw_dispatch_url, json=_send_message_payload(), headers=headers)
+    assert response.status_code == 404, f"[{gap_closure_target}] expected 404 (visibility hide per D11), got {response.status_code}: {response.text[:200]}"
 
 
 @pytest.mark.asyncio
 async def test_extended_card_with_read_permission_returns_200(
     raw_dispatch_url: str,
+    a2a_read_only_token: str,
     gap_closure_target: str,
 ) -> None:
     """``GetExtendedAgentCard`` with ``a2a.read`` permission MUST yield HTTP 200.
@@ -165,14 +170,26 @@ async def test_extended_card_with_read_permission_returns_200(
     GetExtendedAgentCard call. T12 step 8 instead checks the
     per-method permission inside the dispatch.
 
-    Full setup needs a non-admin user with the ``a2a.read`` role
-    granted (NOT ``a2a.invoke``). T28 Part B (commit ``2bc20d26d``) did
-    NOT add per-permission token fixtures; that work is captured in
-    the F1 deferred-fixture-work addendum.
+    Plan Amendment I.2 wired up the ``a2a_read_only_token`` fixture
+    (non-admin user with the ``platform_viewer`` system role assigned
+    globally — that role grants ``a2a.read`` but NOT ``a2a.invoke``;
+    see :mod:`mcpgateway.bootstrap_db`).
+
+    HTTP 200 covers BOTH a valid extended-card response AND the
+    ``-32007 AUTHENTICATED_EXTENDED_CARD_NOT_CONFIGURED`` JSON-RPC
+    error envelope (the public ``registered_agent_id`` agent does not
+    advertise ``capabilities["extendedAgentCard"]``). Both wire
+    outcomes prove the route-level decorator path was NOT taken — a
+    route-level ``@require_permission`` would have produced HTTP 403
+    BEFORE the method dispatch reached the per-method check.
     """
     if gap_closure_target == "reference":
         pytest.skip("Gateway-only behavior: echo agent has no RBAC layer")
-    pytest.skip("TODO: per-permission token fixture needed; see plan F1 deferred-fixture-work addendum")
+
+    headers = {**_base_headers(), "Authorization": f"Bearer {a2a_read_only_token}"}
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        response = await client.post(raw_dispatch_url, json=_get_extended_card_payload(), headers=headers)
+    assert response.status_code == 200, f"[{gap_closure_target}] expected 200 (a2a.read granted, not 403), got {response.status_code}: {response.text[:200]}"
 
 
 @pytest.mark.asyncio
