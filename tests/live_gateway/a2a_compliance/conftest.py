@@ -11,18 +11,16 @@ pair declared below, so every test body runs across the full matrix
 automatically:
 
     reference-jsonrpc       — direct to the live a2a_echo_agent
-    gateway_proxy-jsonrpc   — via ContextForge proxy (placeholder)
-    gateway_virtual-jsonrpc — via ContextForge virtual server (placeholder)
+    gateway_proxy-jsonrpc   — via ContextForge native passthrough
+    gateway_virtual-jsonrpc — via ContextForge virtual server
 
-The two gateway cells are blanket-xfailed at collection time
-(``pytest_collection_modifyitems`` below) under **A2A-GAP-001** — see
-``COMPLIANCE_GAPS.md`` — because ContextForge does not yet expose a
-native A2A JSON-RPC endpoint. Their placeholder targets raise
-``NotImplementedError`` inside ``_open_client``; with the xfail marker
-already attached at collection time, pytest reports each cell as
-``XFAIL`` rather than ``ERROR``. When the gap closes, delete the
-collection hook below and the next matrix run will surface ``XPASS``
-on each newly-passing cell.
+T30 (Wave 7) closed A2A-GAP-001: the gateway-target placeholders are
+gone, both ``gateway_proxy`` and ``gateway_virtual`` now drive the
+native A2A passthrough that landed in Waves 3 + 4. The blanket
+``pytest_collection_modifyitems`` xfail hook was deleted as part of
+the closure — per-test ``xfail_on`` (in ``helpers/compliance.py``)
+remains available for narrower gaps that don't have a stable
+column-wide pattern.
 """
 
 from __future__ import annotations
@@ -76,41 +74,6 @@ _CASES: list[tuple[str, Transport]] = [
 # matrix.
 _PART_A_GAP_CLOSURE_TARGETS: tuple[str, ...] = ("reference", "gateway_proxy", "gateway_virtual")
 
-_GATEWAY_TARGET_NAMES = frozenset({"gateway_proxy", "gateway_virtual"})
-_GATEWAY_XFAIL_REASON = "A2A-GAP-001: ContextForge lacks native A2A passthrough at a public " "JSON-RPC + well-known-card route. See " "tests/live_gateway/a2a_compliance/COMPLIANCE_GAPS.md."
-
-
-def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Blanket-xfail every gateway-target matrix cell (A2A-GAP-001).
-
-    The entire ``gateway_proxy`` and ``gateway_virtual`` columns are
-    known broken via A2A-GAP-001 — the gateway has no native A2A
-    JSON-RPC endpoint, so the placeholder targets raise
-    ``NotImplementedError`` inside ``_open_client``. Marking xfail at
-    collection time (before fixture setup runs) means the fixture's
-    exception lands inside an xfail-wrapped test and pytest reports
-    ``XFAIL`` instead of ``ERROR``.
-
-    Rather than requiring every future test author to remember to call
-    ``xfail_on`` for this column-wide gap, this hook applies the
-    marker once per cell. When A2A-GAP-001 closes, delete this hook
-    entirely and the next matrix run surfaces ``XPASS`` on each
-    newly-passing gateway cell — the cue to move the gap entry to
-    "Closed gaps" in COMPLIANCE_GAPS.md.
-
-    Per-test ``xfail_on`` calls (the helper in
-    ``helpers/compliance.py``) remain the right tool for narrower
-    gaps that don't have a stable column-wide pattern.
-    """
-    del config  # unused; pytest-canonical signature
-    for item in items:
-        callspec = getattr(item, "callspec", None)
-        if callspec is None:
-            continue
-        target_name = callspec.id.split("-")[0]
-        if target_name in _GATEWAY_TARGET_NAMES:
-            item.add_marker(pytest.mark.xfail(strict=False, reason=_GATEWAY_XFAIL_REASON))
-
 
 def _build_target(target_name: str, request: pytest.FixtureRequest):
     """Construct an A2AComplianceTarget for ``target_name``.
@@ -161,11 +124,11 @@ async def client(request: pytest.FixtureRequest) -> AsyncIterator[Client]:
     per invocation; the SDK auto-routes via JSON-RPC per the echo
     agent's advertised card interfaces.
 
-    Gateway targets raise ``NotImplementedError`` inside
-    ``_open_client`` (see ``targets/gateway_proxy.py`` /
-    ``gateway_virtual.py``). The collection hook above attaches an
-    ``xfail`` marker to every gateway cell so the exception is
-    captured as ``XFAIL``.
+    Gateway targets (``gateway_proxy``, ``gateway_virtual``) drive
+    ContextForge's native A2A passthrough at ``/a2a/{name}`` and
+    ``/servers/{id}/a2a/{name}`` respectively. Their ``_open_client``
+    bodies mirror the reference target's shape exactly, with the URL
+    pointed at the gateway's synthesized well-known card.
     """
     target_name, transport = request.param
     target = _build_target(target_name, request)

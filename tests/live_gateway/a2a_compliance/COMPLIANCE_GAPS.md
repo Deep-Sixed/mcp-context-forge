@@ -50,17 +50,14 @@ the marker and the entry per the rules above.
 
 ## Open gaps
 
----
+*(none — A2A-GAP-001 closed 2026-06-21; see Closed gaps below.)*
 
-### A2A-GAP-001 — Gateway lacks native A2A protocol passthrough
+## Closed gaps
 
-| | |
-|---|---|
-| **Targets affected** | `gateway_proxy`, `gateway_virtual` |
-| **Tests** | every test under `v1_0_0/` against the two gateway targets — the harness's `gateway_proxy` and `gateway_virtual` targets currently raise on `_open_client` so the entire matrix column xfails through this one gap |
-| **Spec** | [A2A 1.0.0 — JSON-RPC transport binding](https://a2a-protocol.org/) (placeholder; update with canonical URL when finalized) |
+### A2A-GAP-001 — Gateway lacks native A2A protocol passthrough *(closed 2026-06-21)*
 
-**Observed**: ContextForge exposes A2A agents through three surfaces:
+**Was**: ContextForge exposed A2A agents only through three internal
+or non-protocol surfaces:
 
 | Surface | Path | Shape |
 |---|---|---|
@@ -68,36 +65,43 @@ the marker and the entry per the rules above.
 | REST invocation | `POST /a2a/{agent_name}/invoke` | Custom REST body — not JSON-RPC |
 | Internal authz | `POST /_internal/a2a/{invoke,list,get}/authz`, `POST /_internal/a2a/tasks/{get,list,cancel}` | Internal-only, not publicly routed |
 
-None of these answer the public JSON-RPC + well-known-card contract
+None of these answered the public JSON-RPC + well-known-card contract
 that an `a2a.client.Client` instance expects when called with
-`ClientFactory.create_from_url(...)`.
+`ClientFactory.create_from_url(...)`. The harness's `gateway_proxy`
+and `gateway_virtual` targets raised `NotImplementedError` inside
+`_open_client`; a blanket `pytest_collection_modifyitems` xfail hook
+in `conftest.py` marked every gateway-target matrix cell as `XFAIL`.
 
-**Expected**: the gateway exposes a native A2A endpoint per registered
-agent — minimally:
+**How closed**: the A2A native passthrough plan
+(`.omo/plans/a2a-native-passthrough.md`) landed Wave 3 (T11 per-agent
+card route + T12 JSON-RPC dispatch + T14 SSE streaming wiring) and
+Wave 4 (T16 v-server path-rewrite middleware + T17-T19 v-server card
++ dispatch handlers), giving ContextForge the two contract paths
+the SDK needs:
 
-- `GET /a2a/{agent_name}/.well-known/agent-card.json` returning the
-  agent's spec-shaped AgentCard.
-- `POST /a2a/{agent_name}/` accepting JSON-RPC envelopes for the full
-  A2A method set (``SendMessage``, ``GetTask``, ``ListTasks``,
-  ``CancelTask``, ``GetExtendedAgentCard``, plus 0.3.0 legacy aliases
-  for backwards compatibility).
+- `GET /a2a/{agent_name}/.well-known/agent-card.json` returns a
+  v1.0.0 AgentCard with per-interface `protocolBinding=JSONRPC` and
+  `protocolVersion`, URL rewritten to the gateway (D7 + D8).
+- `POST /a2a/{agent_name}` accepts the full A2A 1.0.0 method set
+  (`SendMessage`, `GetTask`, `ListTasks`, `CancelTask`,
+  `GetExtendedAgentCard`) plus v0.3.0 legacy aliases (D17 + Q12),
+  with method-aware RBAC + version negotiation (T7 + T13).
+- Both URL forms work via the v-server-scoped
+  `/servers/{server_id}/a2a/{agent_name}` family, gated by the
+  three-level conjunctive access (Amendment B).
 
-— so an A2A SDK client can connect end-to-end without bespoke
-transport adaptation.
+T29 (commit bb4132fd9) replaced the placeholder `_open_client`
+bodies in `A2AGatewayProxyTarget` and `A2AGatewayVirtualServerTarget`
+with the canonical `httpx.AsyncClient` + `ClientFactory` shape from
+`A2AReferenceTarget`. T30 (this closure) removed the
+`pytest_collection_modifyitems` hook + the
+`_GATEWAY_TARGET_NAMES` / `_GATEWAY_XFAIL_REASON` constants from
+`conftest.py`, and deleted the temporary
+`scripts/qa/a2a_proxy_smoke.py` (T15) since the harness is now the
+canonical verification surface (Oracle #24 — prefer pytest over
+ad-hoc scripts).
 
-**Why**: Phase 4 of the ContextForge A2A roadmap. Tracked separately
-once an issue is filed; this gap exists to mark all gateway-target
-cells as known-failing in the meantime.
-
-**How to close**: implement native A2A passthrough at the per-agent
-public route + add the well-known agent-card endpoint. Update
-`A2AGatewayProxyTarget` and `A2AGatewayVirtualServerTarget._open_client`
-to construct real `Client` instances via
-`ClientFactory.create_from_url(...)`. Remove the placeholder
-`NotImplementedError` raises; the next matrix run will surface XPASS
-on every previously-xfailed cell.
-
-## Closed gaps
+---
 
 ### A2A-GAP-006 — Echo agent response payloads included non-protobuf fields *(closed 2026-06-20)*
 
