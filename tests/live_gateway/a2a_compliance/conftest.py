@@ -118,25 +118,37 @@ def _build_target(target_name: str, request: pytest.FixtureRequest):
     Reference target pulls the resolved card URL from the
     ``echo_agent_card_url`` fixture (which transitively probes the
     agent's ``/health`` and skips the session if it's unreachable).
-    Gateway placeholders are constructed unconditionally — their
-    ``_open_client`` raises at fixture-setup time, captured by the
-    collection-modify hook above.
+
+    T29 (Wave 7): gateway targets now resolve real fixtures —
+    ``gateway_base_url`` + ``auth_token`` + ``registered_agent_id``
+    (triggers gateway probe + agent registration), and additionally
+    ``server_id`` for ``gateway_virtual``. Their ``_open_client``
+    bodies actually connect via the SDK's ``ClientFactory`` so the
+    matrix tests run end-to-end against the live native passthrough.
     """
     if target_name == "reference":
         base_url = request.getfixturevalue("echo_agent_base_url")
         return A2AReferenceTarget(base_url=base_url)
     if target_name == "gateway_proxy":
+        gateway_base_url = request.getfixturevalue("gateway_base_url")
+        auth_token = request.getfixturevalue("auth_token")
+        agent_name = request.getfixturevalue("registered_agent_name")
+        request.getfixturevalue("registered_agent_id")
         return A2AGatewayProxyTarget(
-            base_url="http://placeholder",
-            auth_token="placeholder",
-            agent_name="a2a-echo-agent",
+            base_url=gateway_base_url,
+            auth_token=auth_token,
+            agent_name=agent_name,
         )
     if target_name == "gateway_virtual":
+        gateway_base_url = request.getfixturevalue("gateway_base_url")
+        auth_token = request.getfixturevalue("auth_token")
+        agent_name = request.getfixturevalue("registered_agent_name")
+        server_id_value = request.getfixturevalue("server_id")
         return A2AGatewayVirtualServerTarget(
-            base_url="http://placeholder",
-            auth_token="placeholder",
-            server_id="placeholder",
-            agent_name="a2a-echo-agent",
+            base_url=gateway_base_url,
+            auth_token=auth_token,
+            server_id=server_id_value,
+            agent_name=agent_name,
         )
     raise AssertionError(f"unknown target: {target_name!r}")
 
