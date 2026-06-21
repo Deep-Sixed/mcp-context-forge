@@ -70,9 +70,11 @@ _CASES: list[tuple[str, Transport]] = [
 # server-CRUD wiring verification.
 # ───────────────────────────────────────────────────────────────────────
 
-# Wave 2 gap-closure tests parametrize over THESE targets. ``gateway_virtual``
-# is added in Wave 7 (T28 Part B) after T20 verifies server-CRUD wiring.
-_PART_A_GAP_CLOSURE_TARGETS: tuple[str, ...] = ("reference", "gateway_proxy")
+# T28 Part B (Wave 7): ``gateway_virtual`` joined the parametrize after
+# T20 + T22 confirmed server-CRUD wiring round-trips through
+# ``server_a2a_association``. All three targets now share the gap-closure
+# matrix.
+_PART_A_GAP_CLOSURE_TARGETS: tuple[str, ...] = ("reference", "gateway_proxy", "gateway_virtual")
 
 _GATEWAY_TARGET_NAMES = frozenset({"gateway_proxy", "gateway_virtual"})
 _GATEWAY_XFAIL_REASON = "A2A-GAP-001: ContextForge lacks native A2A passthrough at a public " "JSON-RPC + well-known-card route. See " "tests/live_gateway/a2a_compliance/COMPLIANCE_GAPS.md."
@@ -294,26 +296,104 @@ def gap_closure_target(request: pytest.FixtureRequest) -> str:
     return request.param
 
 
+@pytest.fixture(scope="session")
+def server_id(
+    gateway_base_url: str,
+    auth_token: str,
+    registered_agent_id: str,
+) -> str:
+    """Session-scoped: ensure an A2A bundling server exists, return its UUID.
+
+    Plan T28 Part B (Wave 7): create a virtual server via
+    ``POST /servers`` with ``associated_a2a_agents=[registered_agent_id]``
+    so the v-server-scoped card and dispatch URLs
+    (``/servers/{server_id}/a2a/{name}``) resolve to the registered
+    echo agent. Returns the server's UUID for use by the
+    ``gateway_virtual`` URL builders below.
+
+    Passes the agent ID (UUID), NOT the name, per Momus v3 #3: the
+    service layer queries ``at.model.id.in_(ids)`` at
+    ``server_service.py:226``, so passing the agent NAME would yield
+    a server with no bound agents.
+
+    Re-list before creating: if a previous run already created the
+    bundling server, reuse its UUID rather than failing on a unique
+    constraint or creating a parallel server.
+
+    Skips the session gracefully when the gateway is unreachable so
+    a developer running the harness without a live gateway sees a
+    clean skip rather than a cascade of connection errors.
+    """
+    server_name = os.getenv("A2A_COMPLIANCE_SERVER_NAME", "a2a-compliance-bundle")
+
+    try:
+        probe = httpx.get(f"{gateway_base_url}/health", timeout=httpx.Timeout(5.0))
+    except httpx.HTTPError as exc:
+        pytest.skip(f"Gateway unreachable at {gateway_base_url}: {exc}")
+    if probe.status_code >= 500:
+        pytest.skip(f"Gateway at {gateway_base_url} returned {probe.status_code}")
+
+    headers = {"Authorization": f"Bearer {auth_token}", "Content-Type": "application/json"}
+
+    list_resp = httpx.get(f"{gateway_base_url}/servers", headers=headers, timeout=httpx.Timeout(10.0))
+    if list_resp.status_code == 200:
+        body = list_resp.json()
+        servers = body.get("items", body) if isinstance(body, dict) else body
+        if isinstance(servers, list):
+            for srv in servers:
+                if isinstance(srv, dict) and srv.get("name") == server_name:
+                    return str(srv["id"])
+
+    payload = {
+        "name": server_name,
+        "description": "A2A 1.0.0 compliance-harness bundling server (T28 Part B)",
+        "associated_a2a_agents": [registered_agent_id],
+        "visibility": "public",
+    }
+    create_resp = httpx.post(f"{gateway_base_url}/servers", headers=headers, json=payload, timeout=httpx.Timeout(15.0))
+    if create_resp.status_code in (200, 201):
+        return str(create_resp.json()["id"])
+
+    if create_resp.status_code == 409:
+        list_resp2 = httpx.get(f"{gateway_base_url}/servers", headers=headers, timeout=httpx.Timeout(10.0))
+        if list_resp2.status_code == 200:
+            body = list_resp2.json()
+            servers = body.get("items", body) if isinstance(body, dict) else body
+            if isinstance(servers, list):
+                for srv in servers:
+                    if isinstance(srv, dict) and srv.get("name") == server_name:
+                        return str(srv["id"])
+
+    pytest.skip(f"Could not register or find server {server_name!r} on gateway " f"{gateway_base_url} (POST /servers status {create_resp.status_code}): {create_resp.text[:200]}")
+
+
 @pytest.fixture
 def raw_card_url(
     gap_closure_target: str,
     gateway_base_url: str,
     registered_agent_name: str,
     echo_agent_base_url: str,
+    request: pytest.FixtureRequest,
 ) -> str:
     """Target-aware well-known card URL for raw-HTTP gap-closure tests.
 
-    Plan T28 Part A: lets T9 card-discovery tests parametrize over
-    ``{reference, gateway_proxy}`` and exercise the same raw HTTP path
-    that ``ClientFactory.create_from_url`` would. The gateway target
-    follows the F8 + T11 URL convention
-    ``/a2a/{agent_name}/.well-known/agent-card.json``.
+    Plan T28 Part A + Part B: lets T9 card-discovery tests parametrize
+    over ``{reference, gateway_proxy, gateway_virtual}`` and exercise
+    the same raw HTTP path that ``ClientFactory.create_from_url``
+    would. Per-agent gateway URL follows the F8 + T11 convention
+    ``/a2a/{name}/.well-known/agent-card.json``; v-server-scoped
+    gateway URL follows the F8 + T16 convention
+    ``/servers/{server_id}/a2a/{name}/.well-known/agent-card.json``.
 
     Args:
         gap_closure_target: Current parametrize cell.
         gateway_base_url: Gateway base for gateway-target URLs.
         registered_agent_name: Agent name used in the URL path.
         echo_agent_base_url: Reference target's base URL (echo agent).
+        request: pytest fixture request used to lazily resolve
+            ``server_id`` only when the parametrize cell needs it
+            (avoids a session-level server creation when no
+            gateway_virtual test runs).
 
     Returns:
         The well-known card URL for the parametrized target.
@@ -322,6 +402,9 @@ def raw_card_url(
         return f"{echo_agent_base_url}/.well-known/agent-card.json"
     if gap_closure_target == "gateway_proxy":
         return f"{gateway_base_url}/a2a/{registered_agent_name}/.well-known/agent-card.json"
+    if gap_closure_target == "gateway_virtual":
+        sid = request.getfixturevalue("server_id")
+        return f"{gateway_base_url}/servers/{sid}/a2a/{registered_agent_name}/.well-known/agent-card.json"
     raise AssertionError(f"unsupported gap-closure target {gap_closure_target!r}")
 
 
@@ -331,19 +414,22 @@ def raw_dispatch_url(
     gateway_base_url: str,
     registered_agent_name: str,
     echo_agent_base_url: str,
+    request: pytest.FixtureRequest,
 ) -> str:
     """Target-aware dispatch URL for raw-HTTP gap-closure tests.
 
-    Plan T28 Part A: lets T10 dispatch-tests parametrize over
-    ``{reference, gateway_proxy}``. The gateway target follows the
-    F8 + T12 URL convention ``/a2a/{agent_name}`` (bare POST endpoint,
-    NOT ``/jsonrpc`` suffix — that decision lives in Q9 of the plan).
-
-    Reference target uses the echo agent's bare base URL, which is the
-    JSON-RPC endpoint A2A 1.0.0 advertises in its card.
+    Plan T28 Part A + Part B: lets T10 dispatch-tests parametrize over
+    ``{reference, gateway_proxy, gateway_virtual}``. Per-agent gateway
+    URL follows the F8 + T12 convention ``/a2a/{name}``; v-server-scoped
+    gateway URL follows the F8 + T16 convention
+    ``/servers/{server_id}/a2a/{name}``. Reference target uses the
+    echo agent's bare base URL.
     """
     if gap_closure_target == "reference":
         return echo_agent_base_url
     if gap_closure_target == "gateway_proxy":
         return f"{gateway_base_url}/a2a/{registered_agent_name}"
+    if gap_closure_target == "gateway_virtual":
+        sid = request.getfixturevalue("server_id")
+        return f"{gateway_base_url}/servers/{sid}/a2a/{registered_agent_name}"
     raise AssertionError(f"unsupported gap-closure target {gap_closure_target!r}")
