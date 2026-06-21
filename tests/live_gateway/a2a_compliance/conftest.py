@@ -51,21 +51,16 @@ _CASES: list[tuple[str, Transport]] = [
 ]
 
 # ───────────────────────────────────────────────────────────────────────
-# T28 Part A — minimal gateway-target fixtures for Wave 2 gap closure
-# (executes before T8 audit + T9/T10 gap-closure tests per plan P5).
+# T28 Part A — minimal gateway-target fixtures for the gap-closure
+# matrix. T29 + T30 (Wave 7) replaced the prior placeholder
+# ``_open_client`` raises with real ``ClientFactory.create_from_url``
+# bodies; the matrix now drives ContextForge's native A2A passthrough
+# end-to-end. Wave 2's gap-closure tests still use raw-HTTP via the
+# ``raw_card_url`` and ``raw_dispatch_url`` fixtures because they
+# pre-date the SDK-driven matrix and validate wire-level shape.
 #
-# Tests that call ``ClientFactory`` (i.e. ``client`` fixture) still hit
-# the placeholder ``_open_client`` which raises ``NotImplementedError``
-# until T29 in Wave 7. Wave 2's gap-closure tests are RAW-HTTP based:
-# they consume ``raw_card_url`` and ``raw_dispatch_url`` fixtures which
-# build target-correct URLs without going through ``ClientFactory``,
-# so they can collect, run, and surface their (intended) failures
-# against ``gateway_proxy`` while Wave 3 implementation is still
-# in flight.
-#
-# Part B of T28 (server creation + sanity test + ``gateway_virtual``
-# parameterization) stays in Wave 7 because it depends on T20's
-# server-CRUD wiring verification.
+# Part B of T28 added the v-server ``server_id`` fixture so the
+# ``gateway_virtual`` URL family is exercisable.
 # ───────────────────────────────────────────────────────────────────────
 
 # T28 Part B (Wave 7): ``gateway_virtual`` joined the parametrize after
@@ -258,15 +253,14 @@ def registered_agent_id(
 
 @pytest.fixture(params=_PART_A_GAP_CLOSURE_TARGETS)
 def gap_closure_target(request: pytest.FixtureRequest) -> str:
-    """Parametrize Wave 2 gap-closure tests over the Part A target set.
+    """Parametrize gap-closure tests over the three live targets.
 
-    Returns the current target name (``"reference"`` or
-    ``"gateway_proxy"``). The collection hook above blanket-xfails
-    ``gateway_proxy`` cells until Wave 3 implementation lands, so
-    gap-closure assertions can be authored without per-test ``xfail_on``
-    boilerplate.
-
-    ``gateway_virtual`` joins this parametrize in Wave 7 (T28 Part B).
+    Returns the current target name (``"reference"``, ``"gateway_proxy"``,
+    or ``"gateway_virtual"``). All three are live since T29 (gateway
+    targets gained real ``_open_client`` bodies) and T30 (A2A-GAP-001
+    closed). Per-test ``xfail_on`` from ``helpers/compliance.py``
+    remains the right tool for narrower gaps that don't span a whole
+    column.
     """
     return request.param
 

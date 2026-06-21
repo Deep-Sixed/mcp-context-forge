@@ -141,14 +141,16 @@ async def test_team_scoped_agent_wrong_team_returns_404(
     2. A token with ``teams=["team-b"]`` (no overlap).
 
     The T28 Part A ``registered_agent_id`` fixture registers a PUBLIC
-    agent (no team scoping). A team-scoped registration fixture is
-    deferred to Wave 7 T28 Part B; this test skips with TODO until
-    then. The wire-level contract (HTTP 404, NOT 403) is asserted
-    once the fixture lands.
+    agent (no team scoping). T28 Part B (commit ``2bc20d26d``) added
+    the v-server bundling fixture but did NOT add a team-scoped agent
+    + wrong-team token pair. This test stays skipped pending a follow-up
+    fixture-work commit that registers a ``team-a`` agent and yields a
+    ``teams=["team-b"]`` token; once that lands, the wire-level contract
+    (HTTP 404, NOT 403) becomes a live assertion.
     """
     if gap_closure_target == "reference":
         pytest.skip("Gateway-only behavior: echo agent has no team-scoped visibility")
-    pytest.skip("TODO: team-scoped agent fixture lands in Wave 7 T28 Part B; T20 closes the visibility wiring")
+    pytest.skip("TODO: team-scoped agent + wrong-team token fixtures needed; see plan F1 deferred-fixture-work addendum")
 
 
 @pytest.mark.asyncio
@@ -164,12 +166,13 @@ async def test_extended_card_with_read_permission_returns_200(
     per-method permission inside the dispatch.
 
     Full setup needs a non-admin user with the ``a2a.read`` role
-    granted (NOT ``a2a.invoke``). RBAC role fixture deferred to Wave
-    7 T28 Part B; this test skips with TODO until then.
+    granted (NOT ``a2a.invoke``). T28 Part B (commit ``2bc20d26d``) did
+    NOT add per-permission token fixtures; that work is captured in
+    the F1 deferred-fixture-work addendum.
     """
     if gap_closure_target == "reference":
         pytest.skip("Gateway-only behavior: echo agent has no RBAC layer")
-    pytest.skip("TODO: per-permission token fixture lands in Wave 7 T28 Part B; T12 step 8 wires the permission check")
+    pytest.skip("TODO: per-permission token fixture needed; see plan F1 deferred-fixture-work addendum")
 
 
 @pytest.mark.asyncio
