@@ -166,7 +166,14 @@ async def test_tasks_list_is_NOT_a_legacy_alias(
         pytest.skip("Gateway-only behavior: v0.3 alias-NOT-mapping logic is in T4")
 
     payload = {"jsonrpc": "2.0", "id": str(uuid4()), "method": "tasks/list", "params": {}}
-    response = await _post(raw_dispatch_url, payload, auth_token)
+    # A confused-but-v1 client sends ``A2A-Version: 1.0.0`` (they think
+    # they're speaking v1 -- they just used the wrong method shape).
+    # The shared ``_headers`` helper deliberately omits the version
+    # header for the v0.3 alias-recognition tests; ``tasks/list`` is
+    # NOT a v0.3 alias so this test sends a real v1 request envelope.
+    headers = {**_headers(auth_token), "A2A-Version": "1.0.0"}
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.post(raw_dispatch_url, json=payload, headers=headers)
 
     # MUST yield -32601 (method not found) OR HTTP 4xx.
     if 400 <= response.status_code < 500:

@@ -121,7 +121,7 @@ async def test_interface_url_matches_target_base(
 
         if gap_closure_target == "reference":
             assert url.startswith(echo_agent_base_url), f"[{gap_closure_target}] interface url {url!r} must start with echo_agent_base_url {echo_agent_base_url!r}"
-        elif gap_closure_target == "gateway_proxy":
+        elif gap_closure_target in ("gateway_proxy", "gateway_virtual"):
             assert url.startswith(gateway_base_url), f"[{gap_closure_target}] interface url {url!r} must start with gateway_base_url {gateway_base_url!r} (NOT upstream's endpoint_url)"
             assert echo_agent_base_url not in url, f"[{gap_closure_target}] interface url {url!r} leaks upstream echo_agent_base_url {echo_agent_base_url!r} (URL was not rewritten)"
         else:

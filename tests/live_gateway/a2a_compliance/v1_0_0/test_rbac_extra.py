@@ -37,8 +37,6 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from tests.helpers.auth import make_test_jwt
-
 pytestmark = [pytest.mark.a2a, pytest.mark.a2a_v1_0_0, pytest.mark.a2a_security]
 
 
@@ -102,24 +100,20 @@ async def test_invalid_token_returns_401(
 async def test_no_invoke_permission_returns_403(
     raw_dispatch_url: str,
     gap_closure_target: str,
+    no_perm_user_token: str,
 ) -> None:
     """Authenticated caller WITHOUT ``a2a.invoke`` permission MUST yield HTTP 403.
 
-    Uses a non-admin token with empty teams (public-only Layer-1
-    visibility) and no RBAC roles. Triggers T12's method-aware
-    permission check.
-
-    The full RBAC role fixture is deferred to Wave 7 T28 Part B; this
-    test asserts the wire outcome (403) so Wave 3 implementation has
-    a contract to satisfy.
+    Uses the ``no_perm_user_token`` fixture (real DB user with
+    auto-assigned roles explicitly revoked) so Layer-2 permission
+    check actually denies ``a2a.invoke``. A raw signed JWT for a
+    never-seen email would auto-provision the user with default roles
+    that include ``a2a.invoke`` and the check would pass instead.
     """
     if gap_closure_target == "reference":
         pytest.skip("Gateway-only behavior: echo agent has no RBAC layer")
 
-    # Non-admin token with empty teams: public-only Layer-1 visibility
-    # AND no RBAC roles → Layer-2 permission check denies a2a.invoke.
-    no_perm_token = make_test_jwt(email="no-perm-user@example.com", is_admin=False)
-    headers = {**_base_headers(), "Authorization": f"Bearer {no_perm_token}"}
+    headers = {**_base_headers(), "Authorization": f"Bearer {no_perm_user_token}"}
     async with httpx.AsyncClient(timeout=5.0) as client:
         response = await client.post(raw_dispatch_url, json=_send_message_payload(), headers=headers)
     assert response.status_code == 403, f"[{gap_closure_target}] expected 403, got {response.status_code}: {response.text[:200]}"
@@ -196,18 +190,18 @@ async def test_extended_card_with_read_permission_returns_200(
 async def test_extended_card_without_read_permission_returns_403(
     raw_dispatch_url: str,
     gap_closure_target: str,
+    no_perm_user_token: str,
 ) -> None:
     """``GetExtendedAgentCard`` WITHOUT ``a2a.read`` permission MUST yield HTTP 403.
 
-    Symmetric to the prior test: a non-admin user with no roles
-    cannot call ``GetExtendedAgentCard``. Drives T12 step 8's
-    permission check.
+    Symmetric to the prior test: uses ``no_perm_user_token`` (real DB
+    user with auto-assigned roles revoked) so Layer-2 denies
+    ``a2a.read``. Drives T12 step 8's permission check.
     """
     if gap_closure_target == "reference":
         pytest.skip("Gateway-only behavior: echo agent has no RBAC layer")
 
-    no_perm_token = make_test_jwt(email="no-perm-user@example.com", is_admin=False)
-    headers = {**_base_headers(), "Authorization": f"Bearer {no_perm_token}"}
+    headers = {**_base_headers(), "Authorization": f"Bearer {no_perm_user_token}"}
     async with httpx.AsyncClient(timeout=5.0) as client:
         response = await client.post(raw_dispatch_url, json=_get_extended_card_payload(), headers=headers)
     assert response.status_code == 403, f"[{gap_closure_target}] expected 403, got {response.status_code}: {response.text[:200]}"
