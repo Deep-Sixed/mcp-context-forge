@@ -169,8 +169,17 @@ def auth_token() -> str:
     The empty-string ``secret`` argument lets ``make_test_jwt`` fall
     through to ``settings.JWT_SECRET_KEY`` from the environment, so a
     real gateway accepts it.
+
+    ``teams=None`` makes the JWT serialize ``"teams": null`` (rather
+    than omitting the key entirely), which is the only way to get
+    Layer-1 ADMIN BYPASS per the ``normalize_token_teams()`` policy
+    in ``AGENTS.md``: with the teams key MISSING, even an admin
+    token is treated as PUBLIC-ONLY visibility and cannot create
+    team-scoped or private resources. The compliance harness needs
+    to create team-scoped agents (Amendment I.2 fixture), so the
+    fixture's admin token must be true admin-bypass.
     """
-    return make_test_jwt(email="admin@example.com", is_admin=True)
+    return make_test_jwt(email="admin@example.com", is_admin=True, teams=None)
 
 
 @pytest.fixture(scope="session")
@@ -236,17 +245,23 @@ def registered_agent_id(
                 if isinstance(agent, dict) and agent.get("name") == registered_agent_name:
                     return str(agent["id"])
 
-    # Not found — register now.
+    # Not found — register now. The POST /a2a route at main.py:4825 uses
+    # FastAPI's multi-body pattern: ``agent: A2AAgentCreate`` Pydantic body
+    # plus top-level ``team_id`` and ``visibility`` Body fields. Wire shape
+    # therefore needs ``{"agent": {...}, "visibility": "..."}`` with the
+    # visibility field hoisted OUT of the agent object.
     payload = {
-        "name": registered_agent_name,
-        "description": "A2A 1.0.0 compliance-harness echo agent (T28 Part A registration)",
-        "endpoint_url": echo_agent_base_url,
-        "agent_type": "jsonrpc",
-        "protocol_version": "1.0.0",
-        "capabilities": {"streaming": True},
+        "agent": {
+            "name": registered_agent_name,
+            "description": "A2A 1.0.0 compliance-harness echo agent (T28 Part A registration)",
+            "endpoint_url": echo_agent_base_url,
+            "agent_type": "jsonrpc",
+            "protocol_version": "1.0.0",
+            "capabilities": {"streaming": True},
+        },
         "visibility": "public",
     }
-    create_resp = httpx.post(f"{gateway_base_url}/a2a", headers=headers, json=payload, timeout=httpx.Timeout(15.0))
+    create_resp = httpx.post(f"{gateway_base_url}/a2a/", headers=headers, json=payload, timeout=httpx.Timeout(15.0))
     if create_resp.status_code in (200, 201):
         return str(create_resp.json()["id"])
 
@@ -331,13 +346,20 @@ def server_id(
                 if isinstance(srv, dict) and srv.get("name") == server_name:
                     return str(srv["id"])
 
+    # POST /servers at main.py:4100 uses FastAPI's multi-body pattern:
+    # ``server: ServerCreate`` Pydantic body plus top-level ``team_id``
+    # and ``visibility`` Body fields. Wire shape needs
+    # ``{"server": {...}, "visibility": "..."}`` with visibility hoisted
+    # OUT of the server object.
     payload = {
-        "name": server_name,
-        "description": "A2A 1.0.0 compliance-harness bundling server (T28 Part B)",
-        "associated_a2a_agents": [registered_agent_id],
+        "server": {
+            "name": server_name,
+            "description": "A2A 1.0.0 compliance-harness bundling server (T28 Part B)",
+            "associated_a2a_agents": [registered_agent_id],
+        },
         "visibility": "public",
     }
-    create_resp = httpx.post(f"{gateway_base_url}/servers", headers=headers, json=payload, timeout=httpx.Timeout(15.0))
+    create_resp = httpx.post(f"{gateway_base_url}/servers/", headers=headers, json=payload, timeout=httpx.Timeout(15.0))
     if create_resp.status_code in (200, 201):
         return str(create_resp.json()["id"])
 
@@ -500,12 +522,21 @@ def team_scoped_agent_id(
 
     headers = {"Authorization": f"Bearer {auth_token}", "Content-Type": "application/json"}
 
-    # Step 1: ensure the team exists.
-    list_teams = httpx.get(f"{gateway_base_url}/teams", headers=headers, timeout=httpx.Timeout(10.0))
+    # Step 1: ensure the team exists. The /teams listing requires the
+    # trailing slash (``GET /teams`` returns a 307 redirect that httpx
+    # follows but loses the path), and the response shape is
+    # ``{"teams": [...], "total": N}`` rather than the ``{"items": [...]}``
+    # convention other endpoints use.
+    list_teams = httpx.get(f"{gateway_base_url}/teams/", headers=headers, timeout=httpx.Timeout(10.0))
     team_id = None
     if list_teams.status_code == 200:
         body = list_teams.json()
-        teams = body.get("items", body) if isinstance(body, dict) else body
+        if isinstance(body, dict):
+            teams = body.get("teams") or body.get("items") or []
+        elif isinstance(body, list):
+            teams = body
+        else:
+            teams = []
         if isinstance(teams, list):
             for t in teams:
                 if isinstance(t, dict) and t.get("name") == team_name:
@@ -534,17 +565,22 @@ def team_scoped_agent_id(
                 if isinstance(a, dict) and a.get("name") == team_scoped_agent_name:
                     return str(a["id"])
 
+    # POST /a2a uses FastAPI multi-body: agent Pydantic body + top-level
+    # team_id + visibility. Hoist team_id and visibility out of the
+    # agent object so the route's Body(...) extractors see them.
     payload = {
-        "name": team_scoped_agent_name,
-        "description": "A2A I.2 team-scoped echo agent (visibility-hide test fixture)",
-        "endpoint_url": echo_agent_base_url,
-        "agent_type": "jsonrpc",
-        "protocol_version": "1.0.0",
-        "capabilities": {"streaming": True, "extendedAgentCard": True},
-        "visibility": "team",
+        "agent": {
+            "name": team_scoped_agent_name,
+            "description": "A2A I.2 team-scoped echo agent (visibility-hide test fixture)",
+            "endpoint_url": echo_agent_base_url,
+            "agent_type": "jsonrpc",
+            "protocol_version": "1.0.0",
+            "capabilities": {"streaming": True, "extendedAgentCard": True},
+        },
         "team_id": team_id,
+        "visibility": "team",
     }
-    create_resp = httpx.post(f"{gateway_base_url}/a2a", headers=headers, json=payload, timeout=httpx.Timeout(15.0))
+    create_resp = httpx.post(f"{gateway_base_url}/a2a/", headers=headers, json=payload, timeout=httpx.Timeout(15.0))
     if create_resp.status_code in (200, 201):
         return str(create_resp.json()["id"])
 
@@ -652,18 +688,36 @@ def a2a_read_only_token(gateway_base_url: str, auth_token: str) -> str:
     if platform_viewer_id is None:
         pytest.skip(f"platform_viewer system role not found on gateway {gateway_base_url} — has bootstrap_db run?")
 
-    # Step 3: assign the role to the user (idempotent — re-assignment is
-    # harmless; the role service deduplicates).
-    assign_resp = httpx.post(
+    # Step 3: assign the role to the user. The role service rejects
+    # duplicate assignments with HTTP 400 ("User already has this role
+    # assignment"), so check existing assignments first and skip the
+    # POST when the user-role mapping is already present.
+    list_user_roles = httpx.get(
         f"{gateway_base_url}/rbac/users/{user_email}/roles",
         headers=headers,
-        json={"role_id": platform_viewer_id, "scope": "global"},
-        timeout=httpx.Timeout(15.0),
+        timeout=httpx.Timeout(10.0),
     )
-    if assign_resp.status_code not in (200, 201, 409):
-        pytest.skip(
-            f"Could not assign platform_viewer role to {user_email!r} on gateway " f"{gateway_base_url} (POST /rbac/users/.../roles status {assign_resp.status_code}): {assign_resp.text[:200]}"
+    already_assigned = False
+    if list_user_roles.status_code == 200:
+        body = list_user_roles.json()
+        roles = body if isinstance(body, list) else (body.get("roles") or body.get("items") or [])
+        if isinstance(roles, list):
+            for ur in roles:
+                if isinstance(ur, dict) and ur.get("role_id") == platform_viewer_id and ur.get("scope") == "global" and ur.get("is_active"):
+                    already_assigned = True
+                    break
+
+    if not already_assigned:
+        assign_resp = httpx.post(
+            f"{gateway_base_url}/rbac/users/{user_email}/roles",
+            headers=headers,
+            json={"role_id": platform_viewer_id, "scope": "global"},
+            timeout=httpx.Timeout(15.0),
         )
+        if assign_resp.status_code not in (200, 201, 409):
+            pytest.skip(
+                f"Could not assign platform_viewer role to {user_email!r} on gateway " f"{gateway_base_url} (POST /rbac/users/.../roles status {assign_resp.status_code}): {assign_resp.text[:200]}"
+            )
 
     # Step 4: JWT bound to the user. Non-admin, empty teams (public-only
     # Layer 1) — platform_viewer is a global-scope role so the RBAC
