@@ -114,7 +114,7 @@ def _base_headers(auth_token: str, version: str = "1.0.0") -> dict[str, str]:
 
 
 @pytest.mark.asyncio
-async def test_f3_a_per_agent_card_discovery(
+async def test_per_agent_card_advertises_jsonrpc_binding_and_rewritten_url(
     gateway_base_url: str,
     registered_agent_name: str,
     registered_agent_id: str,  # noqa: ARG001 — triggers agent registration
@@ -158,7 +158,7 @@ async def test_f3_a_per_agent_card_discovery(
 
 
 @pytest.mark.asyncio
-async def test_f3_b_per_agent_send_message_unary(
+async def test_per_agent_send_message_returns_jsonrpc_result(
     gateway_base_url: str,
     auth_token: str,
     registered_agent_name: str,
@@ -186,7 +186,7 @@ async def test_f3_b_per_agent_send_message_unary(
 
 
 @pytest.mark.asyncio
-async def test_f3_c_per_agent_streaming_message_sse(
+async def test_per_agent_streaming_emits_multiple_jsonrpc_chunks(
     gateway_base_url: str,
     auth_token: str,
     registered_agent_name: str,
@@ -228,7 +228,7 @@ async def test_f3_c_per_agent_streaming_message_sse(
 
 
 @pytest.mark.asyncio
-async def test_f3_d_vserver_scoped_card_and_dispatch(
+async def test_vserver_scoped_card_and_dispatch_match_per_agent(
     gateway_base_url: str,
     auth_token: str,
     registered_agent_name: str,
@@ -268,7 +268,7 @@ async def test_f3_d_vserver_scoped_card_and_dispatch(
 
 
 @pytest.mark.asyncio
-async def test_f3_e_vserver_membership_miss_returns_404(
+async def test_vserver_membership_miss_returns_404(
     gateway_base_url: str,
     auth_token: str,
     server_id: str,
@@ -292,7 +292,7 @@ async def test_f3_e_vserver_membership_miss_returns_404(
 
 
 @pytest.mark.asyncio
-async def test_f3_f_malformed_json_returns_parse_error(
+async def test_malformed_json_returns_parse_error_envelope(
     gateway_base_url: str,
     auth_token: str,
     registered_agent_name: str,
@@ -321,7 +321,7 @@ async def test_f3_f_malformed_json_returns_parse_error(
 
 
 @pytest.mark.asyncio
-async def test_f3_g_unsupported_version_returns_version_error(
+async def test_unsupported_a2a_version_returns_version_error_envelope(
     gateway_base_url: str,
     auth_token: str,
     registered_agent_name: str,
@@ -348,7 +348,7 @@ async def test_f3_g_unsupported_version_returns_version_error(
 
 
 @pytest.mark.asyncio
-async def test_f3_h_legacy_message_send_alias_dispatches(
+async def test_legacy_message_send_alias_dispatches_as_send_message(
     gateway_base_url: str,
     auth_token: str,
     registered_agent_name: str,
@@ -374,7 +374,7 @@ async def test_f3_h_legacy_message_send_alias_dispatches(
 
 
 @pytest.mark.asyncio
-async def test_f3_h_tasks_list_is_not_a_mapped_alias(
+async def test_tasks_list_is_not_aliased_to_known_method(
     gateway_base_url: str,
     auth_token: str,
     registered_agent_name: str,
@@ -406,7 +406,7 @@ async def test_f3_h_tasks_list_is_not_a_mapped_alias(
 
 
 @pytest.mark.asyncio
-async def test_f3_i_extended_card_with_read_permission(
+async def test_extended_card_with_read_permission_returns_200(
     gateway_base_url: str,
     a2a_read_only_token: str,
     registered_agent_name: str,
@@ -428,7 +428,7 @@ async def test_f3_i_extended_card_with_read_permission(
 
 
 @pytest.mark.asyncio
-async def test_f3_i_extended_card_without_read_permission_returns_403(
+async def test_extended_card_without_read_permission_returns_403(
     gateway_base_url: str,
     registered_agent_name: str,
     registered_agent_id: str,  # noqa: ARG001
@@ -453,7 +453,7 @@ async def test_f3_i_extended_card_without_read_permission_returns_403(
 
 
 @pytest.mark.asyncio
-async def test_f3_j_missing_token_returns_401(
+async def test_dispatch_without_authorization_returns_401(
     gateway_base_url: str,
     registered_agent_name: str,
     registered_agent_id: str,  # noqa: ARG001
@@ -471,7 +471,7 @@ async def test_f3_j_missing_token_returns_401(
 
 
 @pytest.mark.asyncio
-async def test_f3_j_no_invoke_permission_returns_403(
+async def test_dispatch_without_invoke_permission_returns_403(
     gateway_base_url: str,
     registered_agent_name: str,
     registered_agent_id: str,  # noqa: ARG001
@@ -490,7 +490,7 @@ async def test_f3_j_no_invoke_permission_returns_403(
 
 
 @pytest.mark.asyncio
-async def test_f3_j_team_scoped_agent_wrong_team_returns_404(
+async def test_wrong_team_token_on_team_scoped_agent_returns_404(
     gateway_base_url: str,
     team_scoped_agent_name: str,
     team_scoped_agent_id: str,  # noqa: ARG001 — triggers team-scoped agent registration
@@ -515,7 +515,7 @@ async def test_f3_j_team_scoped_agent_wrong_team_returns_404(
 
 
 @pytest.mark.asyncio
-async def test_f3_k_uaid_cross_gateway_dispatch() -> None:
+async def test_uaid_cross_gateway_dispatch_routes_via_federation() -> None:
     """(k) UAID cross-gateway dispatch routes through federation path (Oracle #13).
 
     DEFERRED: requires a SECOND gateway instance with shared JWT
@@ -550,7 +550,7 @@ async def _drain_sse(response: httpx.Response, chunks: list[dict]) -> None:
 
 
 @pytest.mark.asyncio
-async def test_f3_l_concurrent_sse_stream_cancellation(
+async def test_concurrent_sse_stream_cancellation_isolates_streams(
     gateway_base_url: str,
     auth_token: str,
     registered_agent_name: str,
@@ -648,7 +648,7 @@ async def test_f3_l_concurrent_sse_stream_cancellation(
 
 
 @pytest.mark.asyncio
-async def test_f3_m_host_header_spoofing_uses_configured_base_url(
+async def test_host_header_spoofing_does_not_poison_card_url(
     gateway_base_url: str,
     registered_agent_name: str,
     registered_agent_id: str,  # noqa: ARG001
