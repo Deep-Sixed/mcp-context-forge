@@ -598,22 +598,121 @@ def team_scoped_agent_id(
 
 
 @pytest.fixture(scope="session")
-def wrong_team_auth_token() -> str:
-    """Session-scoped: non-admin JWT carrying a team UUID that does NOT
-    overlap with the team-scoped agent's team.
+def wrong_team_auth_token(gateway_base_url: str, auth_token: str) -> str:
+    """Session-scoped: non-admin JWT carrying a fake team UUID, for a
+    user that actually exists in the gateway DB.
 
     Plan Amendment I.2: drives the Layer-1 visibility-hide test
-    (:func:`tests.live_gateway.a2a_compliance.v1_0_0.test_rbac_extra.test_team_scoped_agent_wrong_team_returns_404`).
+    (F3 scenario (j.3) +
+    :func:`tests.live_gateway.a2a_compliance.v1_0_0.test_rbac_extra.test_team_scoped_agent_wrong_team_returns_404`).
     The token carries ``teams=["<fake-team-uuid>"]`` which deliberately
-    won't match the real team-a UUID. Layer-1 token scoping filters
-    the team-scoped agent out, so the dispatch returns HTTP 404
-    instead of 403 (D11 — visibility hides, never 403s).
+    won't match the real team-a UUID. With the user provisioned in the
+    DB, auth passes, then Layer-1 visibility evaluates the team-scoped
+    agent against the empty intersection and returns HTTP 404 per D11
+    (visibility hides, never 403s).
+
+    Provisioning the user is required because the token-scoping
+    middleware was previously masking this scenario with a 403 from
+    the team-membership check; now that the native A2A routes opt out
+    of that check (see ``token_scoping.py`` team_check_exempt), the
+    request reaches the route's ``Depends(get_current_user_with_permissions)``,
+    which 401s if the JWT subject is unknown.
 
     Uses a structurally valid UUID for the team value so any downstream
     validation that expects UUID shape doesn't reject the token before
     it reaches the visibility check.
     """
-    return make_test_jwt(email="wrong-team-user@example.com", is_admin=False, teams=["00000000-0000-0000-0000-000000000fff"])
+    user_email = os.getenv("A2A_COMPLIANCE_WRONG_TEAM_EMAIL", "a2a-wrong-team@example.com")
+    # Random-style password to satisfy the gateway's password-policy
+    # ``_has_sequential_chars`` check (rejects passwords like
+    # "DummyWrongTeamP@ss" with too many consecutive sequential
+    # characters).
+    user_password = "Mb5#nP@4Vy8jXc2LqRtZ"  # pragma: allowlist secret
+    headers = {"Authorization": f"Bearer {auth_token}", "Content-Type": "application/json"}
+    # Idempotent provisioning: 200/201 = created, 409 = already exists;
+    # any other status is a real problem (e.g., password policy 400) we
+    # need to surface rather than silently let auth fail downstream.
+    try:
+        create_resp = httpx.post(
+            f"{gateway_base_url}/auth/email/admin/users",
+            headers=headers,
+            json={"email": user_email, "password": user_password, "full_name": "A2A Wrong-Team Test User", "is_admin": False, "is_active": True},
+            timeout=httpx.Timeout(15.0),
+        )
+    except httpx.HTTPError:
+        # Gateway unreachable — surrounding test fixtures will skip first.
+        create_resp = None
+    if create_resp is not None and create_resp.status_code not in (200, 201, 409):
+        pytest.skip(f"Could not provision wrong-team user {user_email!r} on gateway {gateway_base_url} (POST /auth/email/admin/users status {create_resp.status_code}): {create_resp.text[:200]}")
+    return make_test_jwt(email=user_email, is_admin=False, teams=["00000000-0000-0000-0000-000000000fff"])
+
+
+@pytest.fixture(scope="session")
+def no_perm_user_token(gateway_base_url: str, auth_token: str) -> str:
+    """Session-scoped: JWT for a non-admin user that EXISTS in the DB
+    but has NO role assignments.
+
+    Drives F3 scenarios that need to distinguish "user lacks permission"
+    (HTTP 403) from "user does not exist" (HTTP 401). Without this
+    fixture, tests using ``make_test_jwt(email="some-fake-user@...")``
+    get rejected by the auth middleware with 401, never reaching the
+    per-method RBAC check that should return 403.
+
+    Used by:
+
+    * F3 scenario (i.2) — ``GetExtendedAgentCard`` without ``a2a.read``
+      permission → 403.
+    * Equivalent v1_0_0 ``test_rbac_extra`` scenarios.
+
+    The user is created idempotently; the role-assignment step is
+    intentionally skipped so the user has zero RBAC permissions.
+    """
+    user_email = os.getenv("A2A_COMPLIANCE_NO_PERM_EMAIL", "a2a-no-perm@example.com")
+    # Random-style password to satisfy the gateway's password-policy
+    # ``_has_sequential_chars`` check (rejects passwords containing
+    # patterns like "Perm" with sequential lowercase characters).
+    user_password = "Zx9$mQ!7Lq3wHv8KrTpY"  # pragma: allowlist secret
+    headers = {"Authorization": f"Bearer {auth_token}", "Content-Type": "application/json"}
+    try:
+        create_resp = httpx.post(
+            f"{gateway_base_url}/auth/email/admin/users",
+            headers=headers,
+            json={"email": user_email, "password": user_password, "full_name": "A2A No-Permission Test User", "is_admin": False, "is_active": True},
+            timeout=httpx.Timeout(15.0),
+        )
+    except httpx.HTTPError:
+        create_resp = None
+    if create_resp is not None and create_resp.status_code not in (200, 201, 409):
+        pytest.skip(f"Could not provision no-perm user {user_email!r} on gateway {gateway_base_url} (POST /auth/email/admin/users status {create_resp.status_code}): {create_resp.text[:200]}")
+
+    # The gateway's bootstrap auto-assigns ``platform_viewer`` (global)
+    # and a team-scoped role to every newly-created user. Both grant
+    # ``a2a.read``, which defeats this fixture's purpose ("user with
+    # NO a2a permissions"). Revoke ALL active role assignments here
+    # so the user genuinely fails every per-method RBAC check.
+    #
+    # The DELETE endpoint at ``/rbac/users/{email}/roles/{role_id}``
+    # requires ``scope`` (and ``scope_id`` for team-scoped grants) as
+    # query params to disambiguate the assignment row — without them
+    # the service-layer lookup returns 404 "Role assignment not found".
+    list_resp = httpx.get(f"{gateway_base_url}/rbac/users/{user_email}/roles", headers=headers, timeout=httpx.Timeout(10.0))
+    if list_resp.status_code == 200:
+        roles_body = list_resp.json()
+        roles = roles_body if isinstance(roles_body, list) else (roles_body.get("roles") or roles_body.get("items") or [])
+        for ur in roles:
+            if not isinstance(ur, dict) or not ur.get("is_active") or not ur.get("role_id"):
+                continue
+            params = {"scope": ur.get("scope")} if ur.get("scope") else {}
+            if ur.get("scope_id"):
+                params["scope_id"] = ur["scope_id"]
+            httpx.delete(
+                f"{gateway_base_url}/rbac/users/{user_email}/roles/{ur['role_id']}",
+                headers=headers,
+                params=params,
+                timeout=httpx.Timeout(10.0),
+            )
+
+    return make_test_jwt(email=user_email, is_admin=False)
 
 
 @pytest.fixture(scope="session")
