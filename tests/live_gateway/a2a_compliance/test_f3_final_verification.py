@@ -148,8 +148,22 @@ async def test_per_agent_card_advertises_jsonrpc_binding_and_rewritten_url(
     # D9: protocolVersion is per-interface.
     assert "protocolVersion" in iface, f"per-interface protocolVersion missing: {iface!r}"
 
-    # URL rewrite: the gateway base must be advertised, NOT the upstream agent URL.
-    assert gateway_base_url.rstrip("/") in iface.get("url", ""), f"URL not rewritten to gateway: {iface.get('url')!r}"
+    # URL rewrite: the gateway base must be advertised, NOT the upstream
+    # agent URL. F15 says the card uses configured ``a2a_public_base_url``
+    # / ``app_domain`` (not the request Host), so the advertised host may
+    # differ from the test client's connection host (e.g. ``localhost``
+    # vs ``127.0.0.1`` — both reach the same nginx forward). Validate by
+    # path + port instead of exact host string; sanity-check that the
+    # URL is not the upstream echo agent's port.
+    from urllib.parse import urlparse  # local import keeps test self-contained
+
+    iface_url = iface.get("url", "")
+    gw_parsed = urlparse(gateway_base_url)
+    iface_parsed = urlparse(iface_url)
+    assert iface_parsed.path == f"/a2a/{registered_agent_name}", f"URL not rewritten to gateway path /a2a/{{name}}: {iface_url!r}"
+    assert iface_parsed.port == gw_parsed.port, f"URL port {iface_parsed.port} does not match gateway port {gw_parsed.port}: {iface_url!r}"
+    # Sanity: must NOT leak the upstream echo agent port (9100 / 9101).
+    assert iface_parsed.port not in (9100, 9101), f"URL leaks upstream echo agent port: {iface_url!r}"
 
 
 # ───────────────────────────────────────────────────────────────────────
@@ -432,16 +446,18 @@ async def test_extended_card_without_read_permission_returns_403(
     gateway_base_url: str,
     registered_agent_name: str,
     registered_agent_id: str,  # noqa: ARG001
+    no_perm_user_token: str,
 ) -> None:
     """(i.2) ``GetExtendedAgentCard`` without ``a2a.read`` → HTTP 403.
 
     Symmetric to the prior test: a non-admin user with no roles
     cannot call ``GetExtendedAgentCard``. Drives T12 step 8's
-    per-method permission check.
+    per-method permission check. Uses ``no_perm_user_token`` (a real
+    user in the DB with zero RBAC role assignments) so auth passes
+    and the per-method ``a2a.read`` check is the one that 403s.
     """
-    no_perm_token = make_test_jwt(email="no-perm-user@example.com", is_admin=False)
     url = f"{gateway_base_url}/a2a/{registered_agent_name}"
-    headers = _base_headers(no_perm_token)
+    headers = _base_headers(no_perm_user_token)
     async with httpx.AsyncClient(timeout=10.0) as client:
         response = await client.post(url, json=_get_extended_card_payload(), headers=headers)
     assert response.status_code == 403, f"no a2a.read must yield 403, got {response.status_code}: {response.text[:200]}"
@@ -475,15 +491,17 @@ async def test_dispatch_without_invoke_permission_returns_403(
     gateway_base_url: str,
     registered_agent_name: str,
     registered_agent_id: str,  # noqa: ARG001
+    no_perm_user_token: str,
 ) -> None:
     """(j.2) Authenticated caller without ``a2a.invoke`` → HTTP 403.
 
-    Non-admin token with empty teams (public-only Layer-1) and no
-    RBAC roles → Layer-2 permission check denies ``a2a.invoke``.
+    Uses ``no_perm_user_token`` (real user, zero RBAC roles) so auth
+    passes and the per-method ``a2a.invoke`` check is the one that
+    denies with 403. Previously this test used a JWT for a nonexistent
+    user, which auth correctly 401'd before reaching RBAC.
     """
-    no_perm_token = make_test_jwt(email="no-perm-user@example.com", is_admin=False)
     url = f"{gateway_base_url}/a2a/{registered_agent_name}"
-    headers = _base_headers(no_perm_token)
+    headers = _base_headers(no_perm_user_token)
     async with httpx.AsyncClient(timeout=10.0) as client:
         response = await client.post(url, json=_send_message_payload(), headers=headers)
     assert response.status_code == 403, f"no a2a.invoke must yield 403, got {response.status_code}: {response.text[:200]}"
