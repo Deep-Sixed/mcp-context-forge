@@ -23,6 +23,7 @@ Not Found`` (which would prove the method is unrecognized).
 
 from __future__ import annotations
 
+import json
 from uuid import uuid4
 
 import httpx
@@ -48,19 +49,49 @@ def _method_is_recognized(response: httpx.Response) -> bool:
     The method may still fail for OTHER reasons (missing params, auth
     failure, etc.) -- those are NOT method-catalog failures. We only
     assert the method NAME is known.
+
+    Format-agnostic: streaming methods (``SendStreamingMessage``,
+    ``SubscribeToTask``, ``message/stream``, ``tasks/resubscribe``)
+    return ``text/event-stream`` with ``data: {json-rpc envelope}``
+    chunks; unary methods return ``application/json``. Both
+    representations carry an embedded JSON-RPC envelope whose
+    ``error.code`` we inspect to detect ``-32601``.
     """
     if response.status_code == 404:
         return False
     if response.status_code >= 500:
         return False
-    if response.status_code in (200, 400):
-        try:
-            body = response.json()
-        except Exception:
-            return False
-        err = body.get("error") if isinstance(body, dict) else None
-        if isinstance(err, dict) and err.get("code") == -32601:
-            return False
+    if response.status_code not in (200, 400):
+        return True
+
+    content_type = response.headers.get("content-type", "")
+    if content_type.startswith("text/event-stream"):
+        # SSE: scan ``data:`` lines for an embedded JSON-RPC envelope.
+        # The method is recognized as soon as any chunk parses cleanly
+        # without ``-32601``; if every chunk is -32601 (unlikely) or
+        # no parseable chunk appears, treat as unrecognized.
+        for line in response.text.splitlines():
+            if not line.startswith("data: "):
+                continue
+            try:
+                chunk = json.loads(line[len("data: ") :])
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(chunk, dict):
+                continue
+            err = chunk.get("error")
+            if isinstance(err, dict) and err.get("code") == -32601:
+                return False
+            return True
+        return False
+
+    try:
+        body = response.json()
+    except Exception:
+        return False
+    err = body.get("error") if isinstance(body, dict) else None
+    if isinstance(err, dict) and err.get("code") == -32601:
+        return False
     return True
 
 

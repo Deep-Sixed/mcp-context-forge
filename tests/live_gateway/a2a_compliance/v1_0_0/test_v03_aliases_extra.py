@@ -32,6 +32,7 @@ broken assumption).
 
 from __future__ import annotations
 
+import json
 from uuid import uuid4
 
 import httpx
@@ -58,19 +59,44 @@ async def _post(url: str, payload: dict, auth_token: str) -> httpx.Response:
 
 
 def _alias_recognized(response: httpx.Response) -> bool:
-    """An alias is RECOGNIZED iff response is NOT ``-32601 Method Not Found``."""
+    """An alias is RECOGNIZED iff response is NOT ``-32601 Method Not Found``.
+
+    Format-agnostic: ``message/stream`` resolves to ``SendStreamingMessage``
+    which streams ``text/event-stream`` chunks; unary aliases stream a
+    single ``application/json`` envelope. Both representations embed a
+    JSON-RPC envelope whose ``error.code`` we inspect for ``-32601``.
+    """
     if response.status_code >= 500:
         return False
     if response.status_code == 404:
         return False
-    if response.status_code in (200, 400):
-        try:
-            body = response.json()
-        except Exception:
-            return False
-        err = body.get("error") if isinstance(body, dict) else None
-        if isinstance(err, dict) and err.get("code") == -32601:
-            return False
+    if response.status_code not in (200, 400):
+        return True
+
+    content_type = response.headers.get("content-type", "")
+    if content_type.startswith("text/event-stream"):
+        for line in response.text.splitlines():
+            if not line.startswith("data: "):
+                continue
+            try:
+                chunk = json.loads(line[len("data: ") :])
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(chunk, dict):
+                continue
+            err = chunk.get("error")
+            if isinstance(err, dict) and err.get("code") == -32601:
+                return False
+            return True
+        return False
+
+    try:
+        body = response.json()
+    except Exception:
+        return False
+    err = body.get("error") if isinstance(body, dict) else None
+    if isinstance(err, dict) and err.get("code") == -32601:
+        return False
     return True
 
 
