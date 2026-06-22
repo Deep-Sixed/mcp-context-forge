@@ -138,14 +138,22 @@ async def client(request: pytest.FixtureRequest) -> AsyncIterator[Client]:
 
 @pytest.fixture(scope="session")
 def gateway_base_url() -> str:
-    """Read ``A2A_COMPLIANCE_GATEWAY_URL``, default ``http://localhost:4444``.
+    """Read ``A2A_COMPLIANCE_GATEWAY_URL``, default ``http://localhost:8080``.
 
     Plan T28 Part A: target-aware URL building for Wave 2 gap-closure
-    tests starts from this base. Overridable via env so the harness can
-    run against any running ContextForge gateway instance (compose,
-    Kubernetes port-forward, etc.).
+    tests starts from this base. The default targets the nginx router
+    on ``:8080`` that ``make compose-up`` brings up — the three gateway
+    replicas only expose ``:4444`` inside the docker network, so
+    external traffic must enter via nginx. Overridable via env so the
+    harness can run against any running ContextForge gateway instance
+    (Kubernetes port-forward, single-process ``make dev``, etc.).
     """
-    return os.getenv("A2A_COMPLIANCE_GATEWAY_URL", "http://localhost:4444")
+    # IPv4 explicit (127.0.0.1) per the same DNS-stub / IPv6-first issue
+    # documented for ``echo_agent_base_url``: the nginx port-forward
+    # ``0.0.0.0:8080->80/tcp`` binds IPv4 only, and httpx's getaddrinfo
+    # may pick ``::1`` first when resolving ``localhost`` — that hangs
+    # because nothing listens on IPv6.
+    return os.getenv("A2A_COMPLIANCE_GATEWAY_URL", "http://127.0.0.1:8080")
 
 
 @pytest.fixture(scope="session")
@@ -177,14 +185,19 @@ def registered_agent_name() -> str:
     return os.getenv("A2A_COMPLIANCE_AGENT_NAME", "a2a-echo-agent")
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def registered_agent_id(
     gateway_base_url: str,
     auth_token: str,
     registered_agent_name: str,
     echo_agent_base_url: str,
 ) -> str:
-    """Session-scoped: ensure echo agent is registered, return its UUID.
+    """Module-scoped: ensure echo agent is registered, return its UUID.
+
+    Module scope (not session) so the dependency on the module-scoped
+    ``echo_agent_base_url`` resolves cleanly. Registration is
+    idempotent — modules within the same session reuse the existing
+    agent row via the lookup-before-create pattern below.
 
     Plan T28 Part A: POST /a2a admin API to register the echo agent if
     it is not already known to the gateway; on success or "already
@@ -265,13 +278,18 @@ def gap_closure_target(request: pytest.FixtureRequest) -> str:
     return request.param
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def server_id(
     gateway_base_url: str,
     auth_token: str,
     registered_agent_id: str,
 ) -> str:
-    """Session-scoped: ensure an A2A bundling server exists, return its UUID.
+    """Module-scoped: ensure an A2A bundling server exists, return its UUID.
+
+    Module scope (not session) so the dependency on the module-scoped
+    ``registered_agent_id`` resolves cleanly. Server creation is
+    idempotent — modules within the same session reuse the existing
+    bundling server via the lookup-before-create pattern below.
 
     Plan T28 Part B (Wave 7): create a virtual server via
     ``POST /servers`` with ``associated_a2a_agents=[registered_agent_id]``
