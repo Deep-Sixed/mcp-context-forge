@@ -3,6 +3,8 @@
 
 use axum::Router;
 use axum::serve::ListenerExt;
+use rmcp::transport::streamable_http_server::StreamableHttpService;
+use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use serde_json::json;
 use std::env;
 use tracing::info;
@@ -11,7 +13,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::config::{APP_NAME, APP_VERSION, DEFAULT_BIND_ADDRESS, MCP_PROTOCOL_VERSION};
 use crate::rest;
-use crate::transports::{sse, streamable_http};
+use crate::server::FastTimeServer;
+use crate::transports::sse;
 
 pub async fn run() -> anyhow::Result<()> {
     init_logging();
@@ -67,18 +70,23 @@ fn init_logging() {
 }
 
 fn router() -> Router {
+    // Modern Streamable HTTP transport, served entirely by the rmcp SDK.
+    let mcp = StreamableHttpService::new(
+        || Ok(FastTimeServer::new()),
+        LocalSessionManager::default().into(),
+        Default::default(),
+    );
+
     Router::new()
         .route("/health", axum::routing::get(health_handler))
         .route("/version", axum::routing::get(version_handler))
         .route("/api/echo", axum::routing::post(rest::echo_handler))
         .route("/api/time", axum::routing::get(rest::time_handler))
-        .route(
-            "/mcp",
-            axum::routing::post(streamable_http::handler).delete(streamable_http::delete_handler),
-        )
+        // Legacy HTTP+SSE transport — hand-rolled shim (see transports/sse.rs).
         .route("/sse", axum::routing::get(sse::handler))
         .route("/messages", axum::routing::post(sse::message_handler))
         .route("/message", axum::routing::post(sse::message_handler))
+        .nest_service("/mcp", mcp)
 }
 
 async fn health_handler() -> axum::Json<serde_json::Value> {
