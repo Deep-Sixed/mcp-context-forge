@@ -1,21 +1,11 @@
 # Deliberately no native provider-backed agent: startup must not require an
-# API key. The adapters advertise their own authentication requirements when
-# a client opens a Codex or Claude session.
+# API key. AgentPool creates one ACP session per agent eagerly at pool init,
+# so every agent listed here must accept session/new unauthenticated.
+# codex-acp rejects session/new with "Authentication required" until an
+# OpenAI credential is provided, which crash-loops the whole pool — so Codex
+# is excluded here and remains reachable through contextforge-mcacp, where
+# adapters spawn lazily per client session and an auth failure is contained.
 agents:
-  codex:
-    type: acp
-    provider: custom
-    command: /usr/local/bin/node
-    args:
-      - /opt/acp-adapters/codex-acp/dist/index.js
-    display_name: Codex ACP
-    description: OpenAI Codex through the official Agent Client Protocol adapter.
-    cwd: /workspace
-    allow_file_operations: true
-    allow_terminal: true
-    auto_approve: false
-    env_vars:
-      NO_BROWSER: "1"
   claude:
     type: acp
     provider: custom

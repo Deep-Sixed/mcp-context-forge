@@ -69,7 +69,10 @@ services:
 
   contextforge-agentpool:
     container_name: contextforge-agentpool
-    image: contextforge-agentpool:acp-20260713
+    # Tag diverges from mcacp's acp-20260713 on purpose: acp-20260716 carries
+    # the codex-less agents.yml and the acp error-response patch (both
+    # agentpool-only fixes) without rebuilding under the healthy mcacp.
+    image: contextforge-agentpool:acp-20260716
     build:
       context: .
       dockerfile: docker/agentpool/Dockerfile

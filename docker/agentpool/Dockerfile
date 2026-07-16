@@ -33,7 +33,7 @@ LABEL org.opencontainers.image.title="ContextForge AgentPool ACP runtime" \
       org.opencontainers.image.source="https://github.com/phil65/agentpool" \
       contextforge.group="contextforge" \
       contextforge.kind="mcp-and-acp" \
-      contextforge.agentpool.patch="acp-empty-mcpservers" \
+      contextforge.agentpool.patch="acp-empty-mcpservers acp-error-without-data acp-config-category-relaxed" \
       contextforge.agentpool.commit="b6ddbea9cb66173c096942ac57397b636e0a2248" \
       contextforge.acp-schema.commit="12bb33a4bd1c0636bf34a68791b30f34e33ad420" \
       contextforge.codex-acp.commit="75893cd87741b2fe127f6698a8741a2e625c3787" \
@@ -56,6 +56,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
     && git -C /opt/agentpool checkout --detach "$AGENTPOOL_COMMIT" \
     && sed -i 's/Sequence\[McpServer\] | None = None/Sequence[McpServer] = Field(default_factory=list)/g' /opt/agentpool/src/acp/schema/client_requests.py \
     && sed -i 's/list(mcp_servers) if mcp_servers else None/list(mcp_servers or [])/g' /opt/agentpool/src/acp/agent/acp_agent_api.py \
+    # JSON-RPC error objects may omit the optional "data" member. The match
+    # pattern below requires it, so errors like codex-acp's plain
+    # {"code":-32000,"message":"Authentication required"} fall through to the
+    # bare-id case, resolve the pending future with None, and turn into an
+    # AssertionError in send_request instead of a RequestError.
+    && sed -i 's/case {"id": request_id, "error": {"code": code, "message": err, "data": data}}:/case {"id": request_id, "error": {"code": code, "message": err}}:/' /opt/agentpool/src/acp/connection.py \
+    && sed -i 's/error = RequestError(code, err or "Error", data)/error = RequestError(code, err or "Error", message["error"].get("data"))/' /opt/agentpool/src/acp/connection.py \
+    && grep -q 'message\["error"\].get("data")' /opt/agentpool/src/acp/connection.py \
+    # Adapters evolve faster than the pinned schema: claude-agent-acp 0.58.1
+    # returns configOptions with category "model_config", which the Literal
+    # rejects and crashes pool init. The category is a presentational
+    # grouping hint, so accept any string instead of chasing the enum.
+    && sed -i 's/SessionConfigOptionCategory = Literal\["mode", "model", "thought_level", "other"\]/SessionConfigOptionCategory = str/' /opt/agentpool/src/acp/schema/config_options.py \
+    && grep -q 'SessionConfigOptionCategory = str' /opt/agentpool/src/acp/schema/config_options.py \
     && python -m pip install --no-cache-dir --upgrade pip uv \
     && cd /opt/agentpool \
     && uv export --frozen --no-dev --no-emit-project --format requirements-txt --output-file /tmp/agentpool-requirements.txt \
