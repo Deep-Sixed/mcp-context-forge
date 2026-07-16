@@ -16500,7 +16500,7 @@ async def test_admin_test_gateway_wraps_ipv6_pinned_netloc(monkeypatch, mock_db)
     monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
     monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
 
-    async def mock_validate_gateway_test_url(value, _allowed_hosts, _field_name="Gateway test URL"):
+    async def mock_validate_gateway_test_url(value, _allowed_hosts, _field_name="Gateway test URL", **_kwargs):
         return {
             "validated_url": value,
             "hostname": "api.example.com",
@@ -16550,7 +16550,7 @@ async def test_admin_test_gateway_direct_ip_preserves_literal_target(monkeypatch
     monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
     monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
 
-    async def mock_validate_gateway_test_url(value, _allowed_hosts, _field_name="Gateway test URL"):
+    async def mock_validate_gateway_test_url(value, _allowed_hosts, _field_name="Gateway test URL", **_kwargs):
         return {
             "validated_url": value,
             "hostname": "8.8.8.8",
@@ -16597,7 +16597,7 @@ async def test_admin_test_gateway_skips_disabled_gateway(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
     monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
 
-    async def mock_validate_gateway_test_url(value, _allowed_hosts, _field_name="Gateway test URL"):
+    async def mock_validate_gateway_test_url(value, _allowed_hosts, _field_name="Gateway test URL", **_kwargs):
         return {
             "validated_url": value,
             "hostname": "api.example.com",

@@ -1,0 +1,38 @@
+# Register these REST tools on ContextForge so career-ops agents can call them via MCP.
+# Requires CAREER_OPS_FEED_ENABLED=true and career-ops data volume mounted.
+#
+# Admin UI: Tools -> Add REST tool, or POST /admin/tools with equivalent fields.
+# Pair with CareerOpsBridgePlugin (bearer_secret) for localhost feed auth.
+
+tools:
+  - name: career_ops_ingest
+    description: >-
+      Return pending unchecked job leads from career-ops pipeline markdown (JSON jobs array).
+    integration_type: REST
+    base_url: "http://127.0.0.1:4444"
+    path_template: "/v1/internal/career-ops/jobs"
+    method: GET
+    input_schema:
+      type: object
+      properties: {}
+      additionalProperties: false
+    timeout_ms: 5000
+
+  - name: career_ops_search
+    description: >-
+      Search career-ops pipeline and applications records (case-insensitive substring).
+    integration_type: REST
+    base_url: "http://127.0.0.1:4444"
+    path_template: "/v1/internal/career-ops/search"
+    method: GET
+    query_mapping:
+      q: "{{query}}"
+    input_schema:
+      type: object
+      properties:
+        query:
+          type: string
+          description: Search string matched against title, company, url, location, notes.
+      required: ["query"]
+      additionalProperties: false
+    timeout_ms: 5000

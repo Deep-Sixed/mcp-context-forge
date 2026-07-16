@@ -1,0 +1,31 @@
+description: "Route-context connector for Hindsight memory tools on ContextForge."
+author: "EVECOR"
+version: "0.1.0"
+tags: ["evecor", "hindsight", "memory", "connector", "cpex"]
+available_hooks:
+  - "agent_pre_invoke"
+  - "tool_pre_invoke"
+default_config:
+  activation:
+    always_on: false
+    session_tags: ["hindsight", "memory"]
+    agent_id_prefixes: []
+  default_bank_id: "JARVIS"
+  mcp_gateway_name: "hindsight-agent-memory"
+  mcp_url: "http://host.docker.internal:8888/mcp/JARVIS/"
+  http_base_url: "http://host.docker.internal:8888"
+  hindsight_tools:
+    - "retain"
+    - "sync_retain"
+    - "recall"
+    - "reflect"
+    - "get_bank"
+    - "list_memories"
+    - "get_memory"
+    - "list_documents"
+    - "get_document"
+    - "list_operations"
+    - "get_operation"
+    - "list_tags"
+  hindsight_tool_prefixes: ["hindsight_", "hindsight-agent-memory-", "hindsight-agent-memory."]
+  route_note: "Hindsight memory is available through the ContextForge gateway. Use the Hindsight bank-pinned MCP tools for memory operations against JARVIS."

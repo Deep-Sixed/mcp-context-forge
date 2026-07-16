@@ -2878,6 +2878,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
         # For protected admin routes, verify admin status
         try:
             raw_token = None
+            raw_token_is_cookie_source = False
             auth_user_email = None
             auth_user_is_admin = False
 
@@ -2887,14 +2888,16 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
             # Preserve existing precedence: cookie first, then Authorization bearer.
             if cookie_token:
                 raw_token = cookie_token
+                raw_token_is_cookie_source = True
             elif auth_header:
                 scheme, _, credentials_value = auth_header.partition(" ")
                 if scheme.lower() == "bearer" and credentials_value:
                     raw_token = credentials_value.strip() or None
+                    raw_token_is_cookie_source = False
 
             if raw_token:
                 try:
-                    auth_user = await validate_token_user(request, raw_token)
+                    auth_user = await validate_token_user(request, raw_token, is_cookie_source=raw_token_is_cookie_source)
                 except TokenValidationError as exc:
                     logger.warning(
                         "Admin auth token validation failed: %s",

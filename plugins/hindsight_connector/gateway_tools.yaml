@@ -1,0 +1,157 @@
+# Optional REST tool specs for Hindsight when not registering its native MCP endpoint.
+# Preferred path is bank-pinned ContextForge MCP gateway registration:
+#   name: hindsight-agent-memory
+#   url:  http://host.docker.internal:8888/mcp/JARVIS/
+#
+# These specs are intentionally small. Hindsight's native MCP endpoint exposes the full
+# memory tool surface, including mental models, directives, documents, operations, and
+# destructive maintenance tools.
+
+tools:
+  - name: hindsight_health
+    description: "Check Hindsight API and database health."
+    integration_type: REST
+    base_url: "http://host.docker.internal:8888"
+    path_template: "/health"
+    method: GET
+    input_schema:
+      type: object
+      properties: {}
+      additionalProperties: false
+    timeout_ms: 5000
+
+  - name: hindsight_version
+    description: "Return Hindsight API version and enabled feature flags."
+    integration_type: REST
+    base_url: "http://host.docker.internal:8888"
+    path_template: "/version"
+    method: GET
+    input_schema:
+      type: object
+      properties: {}
+      additionalProperties: false
+    timeout_ms: 5000
+
+  - name: hindsight_list_banks
+    description: "List Hindsight memory banks."
+    integration_type: REST
+    base_url: "http://host.docker.internal:8888"
+    path_template: "/v1/default/banks"
+    method: GET
+    input_schema:
+      type: object
+      properties: {}
+      additionalProperties: false
+    timeout_ms: 10000
+
+  - name: hindsight_get_bank_stats
+    description: "Get statistics for a Hindsight memory bank."
+    integration_type: REST
+    base_url: "http://host.docker.internal:8888"
+    path_template: "/v1/default/banks/{bank_id}/stats"
+    method: GET
+    query_mapping:
+      refresh: "refresh"
+    input_schema:
+      type: object
+      properties:
+        bank_id:
+          type: string
+          default: "JARVIS"
+        refresh:
+          type: boolean
+          default: false
+      required: ["bank_id"]
+      additionalProperties: false
+    timeout_ms: 10000
+
+  - name: hindsight_recall
+    description: "Recall memories from a Hindsight bank."
+    integration_type: REST
+    base_url: "http://host.docker.internal:8888"
+    path_template: "/v1/default/banks/{bank_id}/memories/recall"
+    method: POST
+    input_schema:
+      type: object
+      properties:
+        bank_id:
+          type: string
+          default: "JARVIS"
+        query:
+          type: string
+        max_tokens:
+          type: integer
+          default: 4096
+        budget:
+          type: string
+          enum: ["low", "mid", "high"]
+          default: "high"
+        types:
+          type: array
+          items:
+            type: string
+            enum: ["world", "experience", "observation"]
+        prefer_observations:
+          type: boolean
+          default: false
+        tags:
+          type: array
+          items:
+            type: string
+        tags_match:
+          type: string
+          default: "any"
+        query_timestamp:
+          type: string
+      required: ["bank_id", "query"]
+      additionalProperties: false
+    timeout_ms: 30000
+
+  - name: hindsight_retain
+    description: "Retain memories in a Hindsight bank."
+    integration_type: REST
+    base_url: "http://host.docker.internal:8888"
+    path_template: "/v1/default/banks/{bank_id}/memories"
+    method: POST
+    input_schema:
+      type: object
+      properties:
+        bank_id:
+          type: string
+          default: "JARVIS"
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              content:
+                type: string
+              context:
+                type: string
+              timestamp:
+                type: string
+              tags:
+                type: array
+                items:
+                  type: string
+              metadata:
+                type: object
+              document_id:
+                type: string
+              strategy:
+                type: string
+              update_mode:
+                type: string
+                enum: ["replace", "append"]
+            required: ["content"]
+            additionalProperties: true
+        async:
+          type: boolean
+          default: true
+        document_tags:
+          type: array
+          items:
+            type: string
+      required: ["bank_id", "items"]
+      additionalProperties: false
+    timeout_ms: 60000

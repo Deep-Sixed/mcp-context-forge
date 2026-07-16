@@ -1,0 +1,21 @@
+plugins:
+  - name: "ComputerUseLinuxBridge"
+    kind: "external"
+    description: "External Python CPEX bridge for governing computer-use-linux MCP tool calls."
+    version: "0.1.0"
+    author: "EVECOR"
+    hooks: ["agent_pre_invoke", "tool_pre_invoke"]
+    tags: ["evecor", "computer-use", "linux", "desktop-control", "bridge"]
+    mode: "disabled" # set to sequential after computer-use-linux is registered as an MCP server
+    priority: 130
+    conditions: []
+    mcp:
+      proto: STDIO
+      cmd:
+        - "python3"
+        - "-m"
+        - "plugins.external.computer_use_linux_bridge.server"
+      cwd: "."
+      env:
+        PLUGINS_TRANSPORT: "stdio"
+        PLUGINS_CONFIG_PATH: "plugins/external/computer_use_linux_bridge/resources/plugins/config.yaml"

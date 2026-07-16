@@ -1,0 +1,134 @@
+# Fenrir Labs skill hooks — REFERENCE COPY.
+#
+# Thin native cpex adapters -> out-of-process fenrirlabs gateway (port 8778).
+# Skill assets + manifest now live in the standalone FenrirLabs service
+# (/mnt/jarvis-data/projects/FenrirLabs); this dir holds only the cpex adapter.
+#
+# All DISABLED until fenrirlabs-gateway is running. Flip mode to "transform" per skill.
+
+plugins:
+  - name: "FenrirInboxTriage"
+    kind: "plugins.fenrirlabs.skill_hook.FenrirSkillHook"
+    description: "Inject google-inbox-triage skill context on matching Gmail tool calls."
+    version: "1.0.0"
+    author: "Fenrir Labs / EVECOR"
+    hooks: ["tool_pre_invoke", "prompt_pre_fetch"]
+    tags: ["fenrirlabs", "skill", "gmail", "inbox"]
+    mode: "disabled"
+    priority: 150
+    config:
+      skill_id: "inbox-triage"
+      fail_mode: "open"
+      endpoint:
+        base_url: "http://127.0.0.1:8778"
+        path: "/v1/hook"
+        timeout_ms: 500
+
+  - name: "FenrirLeadQualifier"
+    kind: "plugins.fenrirlabs.skill_hook.FenrirSkillHook"
+    description: "Inject google-lead-qualifier skill context on matching Gmail tool calls."
+    version: "1.0.0"
+    author: "Fenrir Labs / EVECOR"
+    hooks: ["tool_pre_invoke", "prompt_pre_fetch"]
+    tags: ["fenrirlabs", "skill", "gmail", "leads"]
+    mode: "disabled"
+    priority: 151
+    config:
+      skill_id: "lead-qualifier"
+      fail_mode: "open"
+      endpoint:
+        base_url: "http://127.0.0.1:8778"
+        path: "/v1/hook"
+        timeout_ms: 500
+
+  - name: "FenrirMeetingPrep"
+    kind: "plugins.fenrirlabs.skill_hook.FenrirSkillHook"
+    description: "Inject google-meeting-prep skill context on matching Calendar/People tool calls."
+    version: "1.0.0"
+    author: "Fenrir Labs / EVECOR"
+    hooks: ["tool_pre_invoke", "prompt_pre_fetch"]
+    tags: ["fenrirlabs", "skill", "calendar", "meeting"]
+    mode: "disabled"
+    priority: 152
+    config:
+      skill_id: "meeting-prep"
+      fail_mode: "open"
+      endpoint:
+        base_url: "http://127.0.0.1:8778"
+        path: "/v1/hook"
+        timeout_ms: 500
+
+  - name: "FenrirAiResumeInterview"
+    kind: "plugins.fenrirlabs.skill_hook.FenrirSkillHook"
+    description: "Inject ai-resume-interview skill context on matching prompts."
+    version: "1.0.0"
+    author: "Fenrir Labs / EVECOR"
+    hooks: ["tool_pre_invoke", "prompt_pre_fetch"]
+    tags: ["fenrirlabs", "skill", "resume", "interview"]
+    mode: "disabled"
+    priority: 153
+    config:
+      skill_id: "ai-resume-interview"
+      fail_mode: "open"
+      endpoint:
+        base_url: "http://127.0.0.1:8778"
+        path: "/v1/hook"
+        timeout_ms: 500
+
+  - name: "FenrirPptxTemplateUpdater"
+    kind: "plugins.fenrirlabs.skill_hook.FenrirSkillHook"
+    description: "Inject pptx-template-updater skill context on filesystem tool calls."
+    version: "1.0.0"
+    author: "Fenrir Labs / EVECOR"
+    hooks: ["tool_pre_invoke", "prompt_pre_fetch"]
+    tags: ["fenrirlabs", "skill", "pptx", "presentation"]
+    mode: "disabled"
+    priority: 154
+    config:
+      skill_id: "pptx-template-updater"
+      fail_mode: "open"
+      endpoint:
+        base_url: "http://127.0.0.1:8778"
+        path: "/v1/hook"
+        timeout_ms: 500
+
+  # NOTE: FenrirIndeedScraper / FenrirStepstoneScraper / FenrirLinkedinLeads
+  # were removed 2026-07-08 — their skills were quarantined for bot-detection
+  # evasion / MCP-security-filter workaround instructions. See
+  # ../../../FenrirLabs/skills/_quarantine/README.md for detail and the
+  # un-quarantine path. Do not re-add these entries until the underlying
+  # SKILL.md files are rewritten.
+
+  - name: "FenrirJobFiltering"
+    kind: "plugins.fenrirlabs.skill_hook.FenrirSkillHook"
+    description: "Inject job-filtering skill context on matching prompts."
+    version: "1.0.0"
+    author: "Fenrir Labs / EVECOR"
+    hooks: ["tool_pre_invoke", "prompt_pre_fetch"]
+    tags: ["fenrirlabs", "skill", "filtering", "recruiting"]
+    mode: "disabled"
+    priority: 158
+    config:
+      skill_id: "job-filtering"
+      fail_mode: "open"
+      endpoint:
+        base_url: "http://127.0.0.1:8778"
+        path: "/v1/hook"
+        timeout_ms: 500
+
+  - name: "FenrirLeadOrchestration"
+    kind: "plugins.fenrirlabs.skill_hook.FenrirSkillHook"
+    description: "Inject lead-orchestration skill context on scraping/export tool calls."
+    version: "1.0.0"
+    author: "Fenrir Labs / EVECOR"
+    hooks: ["tool_pre_invoke", "prompt_pre_fetch"]
+    tags: ["fenrirlabs", "skill", "orchestration", "recruiting"]
+    mode: "disabled"
+    priority: 159
+    config:
+      skill_id: "lead-orchestration"
+      fail_mode: "open"
+      endpoint:
+        base_url: "http://127.0.0.1:8778"
+        path: "/v1/hook"
+        timeout_ms: 500

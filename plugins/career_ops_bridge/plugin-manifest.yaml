@@ -1,0 +1,23 @@
+description: "Inject career-ops skill context and authenticate internal job-feed REST tools on ContextForge."
+author: "EVECOR"
+version: "0.1.0"
+tags: ["evecor", "career-ops", "skill", "bridge"]
+available_hooks:
+  - "agent_pre_invoke"
+  - "tool_pre_invoke"
+default_config:
+  activation:
+    always_on: false
+    session_tags: ["career-ops"]
+    agent_id_prefixes: []
+  skill_path: null
+  max_skill_chars: 12000
+  inject_args_key: "_career_ops_context"
+  career_ops_tools:
+    - "career_ops_ingest"
+    - "career_ops_search"
+  career_ops_tool_prefix: "career_ops_"
+  bearer_secret: null
+  lookup_timeout_seconds: 2.0
+  fail_mode: "open"
+  gateway_tools_note: "All MCP tools registered on this ContextForge gateway are available in this session."

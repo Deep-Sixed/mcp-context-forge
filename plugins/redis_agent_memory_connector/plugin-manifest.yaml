@@ -1,0 +1,18 @@
+description: "Route-context connector for Redis Agent Memory tools on ContextForge."
+author: "EVECOR"
+version: "0.1.0"
+tags: ["evecor", "redis", "agent-memory", "memory", "connector", "cpex"]
+available_hooks:
+  - "agent_pre_invoke"
+  - "tool_pre_invoke"
+default_config:
+  activation:
+    always_on: false
+    session_tags: ["redis-memory", "agent-memory"]
+    agent_id_prefixes: []
+  default_namespace: "JARVIS"
+  mcp_gateway_name: "redis-agent-memory"
+  mcp_url: "http://host.docker.internal:8101/mcp"
+  http_base_url: "http://host.docker.internal:8100"
+  redis_agent_memory_tool_prefixes: ["redis-agent-memory-", "redis-agent-memory.", "agent-memory-", "agent_memory_"]
+  route_note: "Redis Agent Memory is available through the ContextForge gateway. Use its MCP tools for explicit memory operations against the JARVIS namespace."

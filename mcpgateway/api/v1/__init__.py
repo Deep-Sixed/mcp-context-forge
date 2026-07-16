@@ -99,6 +99,14 @@ def _assemble_routers(  # noqa: C901 — deliberate single-function assembly, co
     target_router.include_router(version_router)
     logger.info("Version router included")
 
+    # MetaRouter owns routing decisions; ContextForge only validates and stores
+    # its redacted events. This is intentionally independent of observability
+    # feature flags and contains no routing logic.
+    from mcpgateway.routers.routing_records import router as routing_records_router  # pylint: disable=import-outside-toplevel
+
+    target_router.include_router(routing_records_router)
+    logger.info("MetaRouter routing telemetry ingest included")
+
     # -------------------------------------------------------------------------
     # Group B — always-tried optional router (tool plugin bindings)
     # -------------------------------------------------------------------------

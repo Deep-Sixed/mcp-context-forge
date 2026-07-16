@@ -4321,7 +4321,7 @@ async def admin_login_page(request: Request) -> Response:
                 # First-Party
                 from mcpgateway.auth import validate_token_user
 
-                auth_user = await validate_token_user(request, jwt_token)
+                auth_user = await validate_token_user(request, jwt_token, is_cookie_source=True)
                 token_teams = getattr(request.state, "token_teams", None)
 
                 # Preserve public-only denial invariant — same as AdminAuthMiddleware
@@ -5022,7 +5022,7 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
         jwt_token = request.cookies.get("jwt_token")
         if jwt_token:
             credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=jwt_token)
-            current_user = await get_current_user(credentials, request=request)
+            current_user = await get_current_user(credentials, request=request, is_cookie_source=True)
             if current_user:
                 is_privileged = getattr(current_user, "is_admin", False)
     except Exception as e:
@@ -5116,7 +5116,7 @@ async def change_password_required_handler(request: Request, db: Session = Depen
             current_user = None
             if jwt_token:
                 credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=jwt_token)
-                current_user = await get_current_user(credentials, request=request)
+                current_user = await get_current_user(credentials, request=request, is_cookie_source=True)
         except Exception as e:
             LOGGER.error(f"Authentication error: {e}")
             current_user = None
@@ -14461,7 +14461,12 @@ async def admin_test_gateway(
     # Validate URL with allowlist enforcement and pin a safe resolved IP to close
     # the DNS rebinding gap between validation-time and connection-time resolution.
     try:
-        validated_gateway_target = await SecurityValidator.validate_gateway_test_url(str(request.base_url), allowed_hosts, "Gateway test URL")
+        validated_gateway_target = await SecurityValidator.validate_gateway_test_url(
+            str(request.base_url),
+            allowed_hosts,
+            "Gateway test URL",
+            allow_private_networks=settings.gateway_test_allow_registered_only and settings.ssrf_allow_private_networks,
+        )
     except ValueError as e:
         # Log the actual error for security monitoring, but return generic message
         safe_url = sanitize_url_for_logging(str(request.base_url))

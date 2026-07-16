@@ -19,7 +19,7 @@ import hashlib
 import logging
 import re
 import secrets
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 from urllib.parse import parse_qsl, quote, urlparse
 
 # Third-Party
@@ -148,6 +148,12 @@ class OAuthManager:
         self.max_retries = max_retries
         self.token_storage = token_storage
         self.settings = get_settings()
+        # In-memory client_credentials token cache, keyed by (token_url, client_id).
+        # Avoids re-minting a fresh token on every health-check cycle — with N
+        # oauth-type gateways checked concurrently on each cycle and no caching,
+        # every cycle fires N simultaneous token requests at the IdP regardless
+        # of whether the previous token is still valid.
+        self._cc_token_cache: Dict[Tuple[str, str], Tuple[str, float]] = {}
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get the shared singleton HTTP client.
@@ -516,6 +522,34 @@ class OAuthManager:
             raise OAuthError("OAuth configuration missing valid token_url")
         scopes = runtime_credentials.get("scopes", [])
 
+        cache_key = (token_url, client_id)
+        redis_cache_key = f"oauth:cc_token:{hashlib.sha256(f'{token_url}:{client_id}'.encode()).hexdigest()}"
+        settings = get_settings()
+
+        # Shared cross-worker cache first (gunicorn runs multiple workers with
+        # isolated memory — an in-memory-only cache misses on 1/N of requests
+        # per worker, which under many concurrently-checked gateways is enough
+        # concurrent token traffic to exhaust the IdP's DB connection pool).
+        if settings.cache_type == "redis":
+            redis = await _get_redis_client()
+            if redis:
+                try:
+                    cached_raw = await redis.get(redis_cache_key)
+                    if cached_raw:
+                        if isinstance(cached_raw, bytes):
+                            cached_raw = cached_raw.decode("utf-8")
+                        cached_data = orjson.loads(cached_raw)
+                        if datetime.now(timezone.utc).timestamp() < cached_data["expires_at"]:
+                            return cached_data["access_token"]
+                except Exception as e:
+                    logger.warning("Failed to read cached client_credentials token from Redis: %s", e)
+
+        cached = self._cc_token_cache.get(cache_key)
+        if cached:
+            cached_token, expires_at = cached
+            if datetime.now(timezone.utc).timestamp() < expires_at:
+                return cached_token
+
         # Check if provider requires Basic Auth for client authentication (RFC 6749 Section 2.3.1)
         # Default to form-based auth for backward compatibility
         use_basic_auth = runtime_credentials.get("token_endpoint_auth_method", "client_secret_post") == "client_secret_basic"
@@ -554,7 +588,27 @@ class OAuthManager:
                     raise OAuthError("OAuth token endpoint response did not contain access_token")
 
                 logger.info("""Successfully obtained access token via client credentials""")
-                return token_response["access_token"]
+                access_token = token_response["access_token"]
+
+                expires_in = token_response.get("expires_in")
+                if isinstance(expires_in, (int, float)) and expires_in > 0:
+                    # Refresh 30s early to avoid handing out a token that expires
+                    # mid-request; skip caching entirely if the IdP omits expires_in
+                    # rather than guessing a lifetime.
+                    expires_at = datetime.now(timezone.utc).timestamp() + max(0, expires_in - 30)
+                    self._cc_token_cache[cache_key] = (access_token, expires_at)
+
+                    if settings.cache_type == "redis":
+                        ttl_seconds = int(max(0, expires_in - 30))
+                        if ttl_seconds > 0:
+                            redis = await _get_redis_client()
+                            if redis:
+                                try:
+                                    await redis.setex(redis_cache_key, ttl_seconds, orjson.dumps({"access_token": access_token, "expires_at": expires_at}))
+                                except Exception as e:
+                                    logger.warning("Failed to cache client_credentials token in Redis: %s", e)
+
+                return access_token
 
             except httpx.HTTPError as e:
                 logger.warning("Token request attempt %s failed: %s", attempt + 1, str(e))

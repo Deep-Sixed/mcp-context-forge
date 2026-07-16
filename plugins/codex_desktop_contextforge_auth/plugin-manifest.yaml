@@ -1,0 +1,14 @@
+description: "Inject server-side ContextForge bearer auth for local Codex Desktop MCP requests."
+author: "EVECOR"
+version: "0.1.0"
+tags: ["evecor", "codex-desktop", "contextforge", "authentication", "http"]
+available_hooks:
+  - "http_pre_request"
+default_config:
+  enabled: true
+  paths: ["/mcp"]
+  allowed_client_hosts: ["127.0.0.1", "::1", "localhost"]
+  bearer_token_env_var: "ROUTERCORE_MCP_BEARER_TOKEN"
+  mint_if_missing: true
+  mint_expires_minutes: 60
+  require_no_authorization: true

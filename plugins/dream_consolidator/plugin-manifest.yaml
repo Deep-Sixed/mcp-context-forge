@@ -1,0 +1,25 @@
+description: >-
+  Thin cpex observer feeding the out-of-process Dreaming service
+  (memory/dreaming): model-agnostic memory consolidation ("dreaming") for
+  every model routed through ContextForge. Post-hooks only; each turn is
+  fire-and-forget POSTed over a Unix-domain socket to the service, which owns
+  redaction-on-write, PostgreSQL turn storage, the 24h/N-session trigger, and
+  the four-phase Orient/Gather/Consolidate/Prune LLM pass. Never blocks or
+  fails a hook; an unreachable service drops the turn with a warning.
+author: "EVECOR"
+version: "1.0.0"
+tags: ["evecor", "memory", "consolidation", "observer", "dream"]
+available_hooks:
+  - "prompt_post_fetch"
+  - "tool_post_invoke"
+  - "agent_post_invoke"
+default_config:
+  enabled: true
+  # Per-field clip applied before the envelope leaves the gateway process.
+  max_field_chars: 4096
+  endpoint:
+    # Unix-domain socket of the Dreaming gateway (preferred; uid-gated).
+    socket_path: "~/.evecor/dream/gateway.sock"
+    path: "/v1/hook"
+    # Content envelopes are bigger than ledger receipts; give them headroom.
+    timeout_ms: 1000

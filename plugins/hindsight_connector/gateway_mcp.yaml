@@ -1,0 +1,13 @@
+# Preferred ContextForge registration for Hindsight Agent Memory.
+# Register this as an MCP gateway/server; do not use this file as a CPEX plugin config.
+
+gateway:
+  name: hindsight-agent-memory
+  description: "Hindsight Agent Memory MCP endpoint for the JARVIS memory bank."
+  url: "http://host.docker.internal:8888/mcp/JARVIS/"
+  transport: streamable_http
+  tags:
+    - evecor
+    - memory
+    - hindsight
+    - jarvis

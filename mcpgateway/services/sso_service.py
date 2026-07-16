@@ -462,10 +462,14 @@ class SSOService:
         return deduped_groups
 
     def list_enabled_providers(self) -> List[SSOProvider]:
-        """Get list of enabled SSO providers.
+        """Get list of enabled SSO providers eligible for the interactive login page.
+
+        Excludes API-only/M2M provider rows (browser_login_enabled=False) --
+        e.g. inbound client_credentials providers trusted only for bearer-token
+        validation. Those must never surface as a human SSO login option.
 
         Returns:
-            List of enabled SSO providers
+            List of enabled, browser-login-eligible SSO providers
 
         Examples:
             Returns empty list when DB has no providers:
@@ -475,7 +479,7 @@ class SSOService:
             >>> service.list_enabled_providers()
             []
         """
-        stmt = select(SSOProvider).where(SSOProvider.is_enabled.is_(True))
+        stmt = select(SSOProvider).where(SSOProvider.is_enabled.is_(True), SSOProvider.browser_login_enabled.is_(True))
         result = self.db.execute(stmt)
         return list(result.scalars().all())
 

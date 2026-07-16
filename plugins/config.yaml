@@ -1218,3 +1218,406 @@ plugins:
     conditions: []
     config:
       context_key: jwt_claims
+  - name: "CodexDesktopContextForgeAuth"
+    kind: "plugins.codex_desktop_contextforge_auth.codex_desktop_contextforge_auth.CodexDesktopContextForgeAuthPlugin"
+    description: "Server-side bearer injection for local Codex Desktop direct ContextForge MCP."
+    version: "0.1.0"
+    author: "EVECOR"
+    hooks: ["http_pre_request"]
+    tags: ["evecor", "codex-desktop", "contextforge", "auth"]
+    mode: "sequential"
+    priority: 1
+    conditions: []
+    config:
+      enabled: true
+      paths: ["/mcp"]
+      allowed_client_hosts: ["127.0.0.1", "::1", "localhost"]
+      bearer_token_env_var: "ROUTERCORE_MCP_BEARER_TOKEN"
+      mint_if_missing: true
+      mint_expires_minutes: 60
+      require_no_authorization: true
+
+  # ===================================================================================
+  # EVECOR control-surface adapters (see plugins/evecor.config.yaml + evecor_common/README.md)
+  # Thin native adapters -> out-of-process EVECOR services over UDS/loopback.
+  # All DISABLED until each service listener is up. Live-path order is explicit:
+  #   tool_pre_invoke:  TruthGuardGate(10) -> AgentSyncEnforcer(20)
+  #   tool_post_invoke: ReconRecorder(80)  -> LedgerWriter(90)   (observe-only)
+  # ===================================================================================
+  - name: "TruthGuardGate"
+    kind: "plugins.truthguard_gate.truthguard_gate.TruthGuardGate"
+    description: "Blocks dangerous/phantom tool invocations via the out-of-process TruthGuard service."
+    version: "0.1.0"
+    author: "EVECOR"
+    hooks: ["tool_pre_invoke"]
+    tags: ["evecor", "gate", "truthguard", "safety"]
+    mode: "disabled" # AgentSync production stand-down; endpoint retained as historical wiring
+    priority: 10 # runs FIRST on tool_pre_invoke
+    conditions: []
+    config:
+      fail_mode: "closed"
+      endpoint:
+        socket_path: ""
+        base_url: "http://host.docker.internal:8771"
+        path: "/v1/gate"
+        timeout_ms: 1000
+
+  - name: "AgentSyncEnforcer"
+    kind: "plugins.agentsync_enforcer.agentsync_enforcer.AgentSyncEnforcer"
+    description: "Enforces AgentSync rules/obligations on tool invocations via the out-of-process AgentSync service."
+    version: "0.1.0"
+    author: "EVECOR"
+    hooks: ["tool_pre_invoke"]
+    tags: ["evecor", "gate", "agentsync", "policy"]
+    mode: "disabled" # AgentSync production stand-down; endpoint retained as historical wiring
+    priority: 20 # runs after TruthGuard
+    conditions: []
+    config:
+      fail_mode: "open"    # Phase 1: open — AgentSync unreachable allows + alerts; tighten after proven stable
+      endpoint:
+        socket_path: ""
+        base_url: "http://host.docker.internal:8772"
+        path: "/v1/gate"
+        timeout_ms: 25
+
+  - name: "ReconRecorder"
+    kind: "plugins.recon_recorder.recon_recorder.ReconRecorder"
+    description: "Flight-records each tool invocation to the out-of-process RECON service (fire-and-forget)."
+    version: "0.1.0"
+    author: "EVECOR"
+    hooks: ["tool_post_invoke"]
+    tags: ["evecor", "observer", "recon", "audit"]
+    mode: "disabled" # AgentSync production stand-down; endpoint retained as historical wiring
+    priority: 80 # observers run late
+    conditions: []
+    config:
+      endpoint:
+        socket_path: ""
+        base_url: "http://host.docker.internal:8773"
+        path: "/v1/record"
+        timeout_ms: 250
+
+  - name: "LedgerWriter"
+    kind: "plugins.ledger_writer.ledger_writer.LedgerWriter"
+    description: "Appends each tool invocation to the out-of-process Ledger service (fire-and-forget)."
+    version: "0.1.0"
+    author: "EVECOR"
+    hooks: ["tool_post_invoke"]
+    tags: ["evecor", "observer", "ledger", "provenance"]
+    mode: "disabled" # AgentSync production stand-down; endpoint retained as historical wiring
+    priority: 90 # after recon
+    conditions: []
+    config:
+      endpoint:
+        socket_path: ""
+        base_url: "http://host.docker.internal:8774"
+        path: "/v1/record"
+        timeout_ms: 250
+
+  - name: "WikiRecorder"
+    kind: "plugins.wiki_recorder.wiki_recorder.WikiRecorder"
+    description: "Appends each tool invocation to the WIKI corpus (raw/sessions) via the out-of-process Wiki gateway (fire-and-forget)."
+    version: "0.1.0"
+    author: "EVECOR"
+    hooks: ["tool_post_invoke"]
+    tags: ["evecor", "observer", "wiki", "corpus"]
+    mode: "disabled" # AgentSync production stand-down; endpoint retained as historical wiring
+    priority: 95 # after ledger
+    conditions: []
+    config:
+      endpoint:
+        socket_path: ""
+        base_url: "http://host.docker.internal:8775"
+        path: "/v1/record"
+        timeout_ms: 250
+
+  # ===================================================================================
+  # Career-ops bridge (see plugins/career_ops.config.yaml + career_ops_bridge/README.md)
+  # Injects career-ops skill on agent_pre_invoke; auth for career_ops_* REST tools on
+  # tool_pre_invoke. Full MCP catalog remains available via normal gateway session tools.
+  # ===================================================================================
+  - name: "CareerOpsBridge"
+    kind: "plugins.career_ops_bridge.career_ops_bridge.CareerOpsBridgePlugin"
+    description: "Inject career-ops skill context; authenticate internal job-feed REST tools."
+    version: "0.1.0"
+    author: "EVECOR"
+    hooks: ["agent_pre_invoke", "tool_pre_invoke"]
+    tags: ["evecor", "career-ops", "skill", "bridge"]
+    mode: "disabled"
+    priority: 140
+    conditions: []
+    config:
+      activation:
+        always_on: false
+        session_tags: ["career-ops"]
+        agent_id_prefixes: []
+      skill_path: null
+      bearer_secret: "routercore.mcp.bearer"
+      fail_mode: "open"
+      career_ops_tools:
+        - "career_ops_ingest"
+        - "career_ops_search"
+
+  # ===================================================================================
+  # Hindsight connector (see plugins/hindsight_connector/README.md)
+  # CPEX does not register MCP tools. Register Hindsight's own bank-pinned MCP endpoint
+  # (http://host.docker.internal:8888/mcp/JARVIS/) as a ContextForge gateway/server, then this
+  # plugin adds route context/metadata around matching Hindsight traffic.
+  # ===================================================================================
+  - name: "HindsightConnector"
+    kind: "plugins.hindsight_connector.hindsight_connector.HindsightConnectorPlugin"
+    description: "Route-context connector for Hindsight memory tools on ContextForge."
+    version: "0.1.0"
+    author: "EVECOR"
+    hooks: ["agent_pre_invoke", "tool_pre_invoke"]
+    tags: ["evecor", "hindsight", "memory", "connector"]
+    mode: "transform"
+    priority: 141
+    conditions: []
+    config:
+      activation:
+        always_on: false
+        session_tags: ["hindsight", "memory"]
+        agent_id_prefixes: []
+      default_bank_id: "JARVIS"
+      mcp_gateway_name: "hindsight-agent-memory"
+      mcp_url: "http://host.docker.internal:8888/mcp/JARVIS/"
+      http_base_url: "http://host.docker.internal:8888"
+      hindsight_tool_prefixes:
+        - "hindsight_"
+        - "hindsight-agent-memory-"
+        - "hindsight-agent-memory."
+
+  # ===================================================================================
+  # Redis Agent Memory connector (see plugins/redis_agent_memory_connector/README.md)
+  # CPEX does not register MCP tools. Register Redis Agent Memory's upstream MCP endpoint
+  # (http://host.docker.internal:8101/mcp) as a ContextForge gateway/server, then this
+  # plugin adds route context/metadata around matching Redis Agent Memory traffic.
+  # ===================================================================================
+  - name: "RedisAgentMemoryConnector"
+    kind: "plugins.redis_agent_memory_connector.redis_agent_memory_connector.RedisAgentMemoryConnectorPlugin"
+    description: "Route-context connector for Redis Agent Memory tools on ContextForge."
+    version: "0.1.0"
+    author: "EVECOR"
+    hooks: ["agent_pre_invoke", "tool_pre_invoke"]
+    tags: ["evecor", "redis", "agent-memory", "memory", "connector"]
+    mode: "transform"
+    priority: 142
+    conditions: []
+    config:
+      activation:
+        always_on: false
+        session_tags: ["redis-memory", "agent-memory"]
+        agent_id_prefixes: []
+      default_namespace: "JARVIS"
+      mcp_gateway_name: "redis-agent-memory"
+      mcp_url: "http://host.docker.internal:8101/mcp"
+      http_base_url: "http://host.docker.internal:8100"
+      redis_agent_memory_tool_prefixes:
+        - "redis-agent-memory-"
+        - "redis-agent-memory."
+        - "agent-memory-"
+        - "agent_memory_"
+
+  # ===================================================================================
+  # computer-use-linux bridge. Was declared as an "external" out-of-process
+  # plugin pointing at plugins/external/computer_use_linux_bridge/ — that
+  # directory never existed (verified 2026-07-15, confirmed dangling
+  # reference, not just disabled). Switched to the real in-process plugin
+  # class at plugins/computer_use_linux_bridge/computer_use_linux_bridge.py,
+  # which does exist. Enabled now that computer-use-linux is actually
+  # registered as an MCP server and reachable=true — see
+  # gateway/mcp-servers/computer-use-linux/.
+  # ===================================================================================
+  - name: "ComputerUseLinuxBridge"
+    kind: "plugins.computer_use_linux_bridge.computer_use_linux_bridge.ComputerUseLinuxBridgePlugin"
+    description: "Inject Linux desktop-control guidance and guard computer-use-linux MCP tool calls."
+    version: "0.1.0"
+    author: "EVECOR"
+    hooks: ["agent_pre_invoke", "tool_pre_invoke"]
+    tags: ["evecor", "computer-use", "linux", "desktop-control", "bridge"]
+    mode: "sequential"
+    priority: 130
+    conditions: []
+    config:
+      activation:
+        always_on: false
+        session_tags: ["computer-use-linux"]
+        agent_id_prefixes: []
+      skill_path: null
+      tool_prefixes:
+        - "computer_use_linux_"
+        - "computer-use-linux."
+        - "computer-use-linux/"
+        - "computer-use-linux:"
+        - "computer-use-linux-"
+      server_id_fragments:
+        - "computer-use-linux"
+        - "computer_use_linux"
+      match_unqualified_tools: false
+      confirmation_arg: "_computer_use_linux_confirmed"
+      trusted_session_tags:
+        - "computer-use-linux-approved"
+        - "desktop-control-approved"
+      guarded_tool_classes:
+        - "setup"
+        - "destructive"
+      enforce_screenshot_defaults: true
+      screenshot_defaults:
+        max_width: 1920
+        max_height: 1920
+        max_bytes: 2097152
+        format: null
+        quality: null
+
+  # ===================================================================================
+  # Fenrir Labs skill hooks (see plugins/fenrirlabs/fenrirlabs.config.yaml)
+  # Thin native adapters -> out-of-process fenrirlabs gateway on :8778.
+  # Skill assets: plugins/fenrirlabs/skills/
+  # ===================================================================================
+  - name: "FenrirInboxTriage"
+    kind: "plugins.fenrirlabs.skill_hook.FenrirSkillHook"
+    description: "Inject google-inbox-triage skill context on matching Gmail tool calls."
+    version: "1.0.0"
+    author: "Fenrir Labs / EVECOR"
+    hooks: ["tool_pre_invoke", "prompt_pre_fetch"]
+    tags: ["fenrirlabs", "skill", "gmail", "inbox"]
+    mode: "disabled"
+    priority: 150
+    config:
+      skill_id: "inbox-triage"
+      fail_mode: "open"
+      endpoint:
+        base_url: "http://host.docker.internal:8778"
+        path: "/v1/hook"
+        timeout_ms: 500
+
+  - name: "FenrirLeadQualifier"
+    kind: "plugins.fenrirlabs.skill_hook.FenrirSkillHook"
+    description: "Inject google-lead-qualifier skill context on matching Gmail tool calls."
+    version: "1.0.0"
+    author: "Fenrir Labs / EVECOR"
+    hooks: ["tool_pre_invoke", "prompt_pre_fetch"]
+    tags: ["fenrirlabs", "skill", "gmail", "leads"]
+    mode: "disabled"
+    priority: 151
+    config:
+      skill_id: "lead-qualifier"
+      fail_mode: "open"
+      endpoint:
+        base_url: "http://host.docker.internal:8778"
+        path: "/v1/hook"
+        timeout_ms: 500
+
+  - name: "FenrirMeetingPrep"
+    kind: "plugins.fenrirlabs.skill_hook.FenrirSkillHook"
+    description: "Inject google-meeting-prep skill context on matching Calendar/People tool calls."
+    version: "1.0.0"
+    author: "Fenrir Labs / EVECOR"
+    hooks: ["tool_pre_invoke", "prompt_pre_fetch"]
+    tags: ["fenrirlabs", "skill", "calendar", "meeting"]
+    mode: "disabled"
+    priority: 152
+    config:
+      skill_id: "meeting-prep"
+      fail_mode: "open"
+      endpoint:
+        base_url: "http://host.docker.internal:8778"
+        path: "/v1/hook"
+        timeout_ms: 500
+
+  - name: "FenrirAiResumeInterview"
+    kind: "plugins.fenrirlabs.skill_hook.FenrirSkillHook"
+    description: "Inject ai-resume-interview skill context on matching prompts."
+    version: "1.0.0"
+    author: "Fenrir Labs / EVECOR"
+    hooks: ["tool_pre_invoke", "prompt_pre_fetch"]
+    tags: ["fenrirlabs", "skill", "resume", "interview"]
+    mode: "disabled"
+    priority: 153
+    config:
+      skill_id: "ai-resume-interview"
+      fail_mode: "open"
+      endpoint:
+        base_url: "http://host.docker.internal:8778"
+        path: "/v1/hook"
+        timeout_ms: 500
+
+  - name: "FenrirPptxTemplateUpdater"
+    kind: "plugins.fenrirlabs.skill_hook.FenrirSkillHook"
+    description: "Inject pptx-template-updater skill context on filesystem tool calls."
+    version: "1.0.0"
+    author: "Fenrir Labs / EVECOR"
+    hooks: ["tool_pre_invoke", "prompt_pre_fetch"]
+    tags: ["fenrirlabs", "skill", "pptx", "presentation"]
+    mode: "disabled"
+    priority: 154
+    config:
+      skill_id: "pptx-template-updater"
+      fail_mode: "open"
+      endpoint:
+        base_url: "http://host.docker.internal:8778"
+        path: "/v1/hook"
+        timeout_ms: 500
+
+  # NOTE: FenrirIndeedScraper / FenrirStepstoneScraper / FenrirLinkedinLeads
+  # were removed 2026-07-08 — their skills were quarantined for bot-detection
+  # evasion / MCP-security-filter workaround instructions. See
+  # FenrirLabs/skills/_quarantine/README.md for detail and the un-quarantine path.
+  # Do not re-add these entries until the underlying SKILL.md files are rewritten.
+
+  - name: "FenrirJobFiltering"
+    kind: "plugins.fenrirlabs.skill_hook.FenrirSkillHook"
+    description: "Inject job-filtering skill context on matching prompts."
+    version: "1.0.0"
+    author: "Fenrir Labs / EVECOR"
+    hooks: ["tool_pre_invoke", "prompt_pre_fetch"]
+    tags: ["fenrirlabs", "skill", "filtering", "recruiting"]
+    mode: "disabled"
+    priority: 158
+    config:
+      skill_id: "job-filtering"
+      fail_mode: "open"
+      endpoint:
+        base_url: "http://host.docker.internal:8778"
+        path: "/v1/hook"
+        timeout_ms: 500
+
+  - name: "FenrirLeadOrchestration"
+    kind: "plugins.fenrirlabs.skill_hook.FenrirSkillHook"
+    description: "Inject lead-orchestration skill context on scraping/export tool calls."
+    version: "1.0.0"
+    author: "Fenrir Labs / EVECOR"
+    hooks: ["tool_pre_invoke", "prompt_pre_fetch"]
+    tags: ["fenrirlabs", "skill", "orchestration", "recruiting"]
+    mode: "disabled"
+    priority: 159
+    config:
+      skill_id: "lead-orchestration"
+      fail_mode: "open"
+      endpoint:
+        base_url: "http://host.docker.internal:8778"
+        path: "/v1/hook"
+        timeout_ms: 500
+
+  # Webhook Notification Plugin - Send HTTP notifications on events
+  - name: "DreamConsolidator"
+    kind: "plugins.dream_consolidator.dream_consolidator.DreamConsolidator"
+    description: "Thin observer feeding the Dreaming memory-consolidation service."
+    version: "1.0.0"
+    author: "EVECOR"
+    hooks: ["prompt_post_fetch", "tool_post_invoke", "agent_post_invoke"]
+    tags: ["evecor", "memory", "consolidation", "observer", "dream"]
+    mode: "fire_and_forget"
+    priority: 95
+    conditions: []
+    config:
+      enabled: true
+      max_field_chars: 4096
+      endpoint:
+        # Absolute container path: EvecorObserverAdapter passes this to httpx
+        # verbatim (no expanduser). /home/appuser/.evecor/dream is the bind mount
+        # of /mnt/jarvis-data/projects/.state/routercore/dream (v2 gateway socket).
+        socket_path: "/home/appuser/.evecor/dream/gateway.sock"
+        path: "/v1/hook"
+        timeout_ms: 1000

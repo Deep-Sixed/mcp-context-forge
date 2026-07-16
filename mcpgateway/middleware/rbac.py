@@ -423,7 +423,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
         # First-Party
         from mcpgateway.auth import validate_token_user
 
-        user = await validate_token_user(request, token)
+        user = await validate_token_user(request, token, is_cookie_source=token_from_cookie)
 
         # Read auth_method and request_id from request.state
         # (auth_method set by plugin in get_current_user, request_id set by HTTP middleware)

@@ -2402,6 +2402,23 @@ class TestGatewayTestEndpointSecurity:
                     logger.debug(f"SSRF correctly blocked private IP in allowlist: {exc_info.value}")
 
     @pytest.mark.asyncio
+    async def test_registered_private_gateway_can_be_tested_only_with_explicit_opt_in(self):
+        """Private destinations require the registered-gateway-only caller opt-in."""
+        from mcpgateway.common.validators import SecurityValidator
+        from mcpgateway.config import settings
+
+        with patch.object(settings, "ssrf_protection_enabled", True):
+            with patch.object(settings, "ssrf_allow_private_networks", True):
+                result = await SecurityValidator.validate_gateway_test_url(
+                    "http://192.168.1.1/",
+                    ["192.168.1.1"],
+                    allow_private_networks=True,
+                )
+
+        assert result["hostname"] == "192.168.1.1"
+        assert result["resolved_ip"]
+
+    @pytest.mark.asyncio
     async def test_allowlist_idn_normalization(self):
         """Test that IDN/Punycode domains are handled in allowlist (ICACF-15 Issue #3).
 

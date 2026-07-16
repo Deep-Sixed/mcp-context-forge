@@ -412,8 +412,11 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         if not self.log_resolve_user_identity:
             return (None, None)
         token = None
+        is_cookie_source = False
         if request.cookies:
             token = request.cookies.get("jwt_token") or request.cookies.get("access_token") or request.cookies.get("token")
+            if token:
+                is_cookie_source = True
 
         if not token:
             # Read from the configured AUTH_HEADER_NAME so identity logging keeps
@@ -423,6 +426,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 scheme, _, raw_token = auth_header.partition(" ")
                 if scheme.lower() == "bearer" and raw_token:
                     token = raw_token
+                    is_cookie_source = False
 
         if not token:
             return (None, None)
@@ -430,7 +434,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         try:
             credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
             # get_current_user now uses fresh DB sessions internally
-            user = await get_current_user(credentials)
+            user = await get_current_user(credentials, is_cookie_source=is_cookie_source)
             raw_user_id = getattr(user, "id", None)
             user_email = getattr(user, "email", None)
             return (str(raw_user_id) if raw_user_id is not None else None, user_email)

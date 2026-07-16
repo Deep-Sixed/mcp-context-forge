@@ -1,0 +1,38 @@
+description: "CPEX bridge that injects Linux desktop-control guidance and guards computer-use-linux MCP tool calls."
+author: "EVECOR"
+version: "0.1.0"
+tags: ["evecor", "computer-use", "linux", "desktop-control", "bridge"]
+available_hooks:
+  - "agent_pre_invoke"
+  - "tool_pre_invoke"
+default_config:
+  activation:
+    always_on: false
+    session_tags: ["computer-use-linux"]
+    agent_id_prefixes: []
+  skill_path: null
+  max_skill_chars: 12000
+  tool_prefixes:
+    - "computer_use_linux_"
+    - "computer-use-linux."
+    - "computer-use-linux/"
+    - "computer-use-linux:"
+    - "computer-use-linux-"
+  server_id_fragments:
+    - "computer-use-linux"
+    - "computer_use_linux"
+  match_unqualified_tools: false
+  confirmation_arg: "_computer_use_linux_confirmed"
+  trusted_session_tags:
+    - "computer-use-linux-approved"
+    - "desktop-control-approved"
+  guarded_tool_classes:
+    - "setup"
+    - "destructive"
+  enforce_screenshot_defaults: true
+  screenshot_defaults:
+    max_width: 1920
+    max_height: 1920
+    max_bytes: 2097152
+    format: null
+    quality: null

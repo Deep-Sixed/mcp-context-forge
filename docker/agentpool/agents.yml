@@ -1,0 +1,30 @@
+# Deliberately no native provider-backed agent: startup must not require an
+# API key. The adapters advertise their own authentication requirements when
+# a client opens a Codex or Claude session.
+agents:
+  codex:
+    type: acp
+    provider: custom
+    command: /usr/local/bin/node
+    args:
+      - /opt/acp-adapters/codex-acp/dist/index.js
+    display_name: Codex ACP
+    description: OpenAI Codex through the official Agent Client Protocol adapter.
+    cwd: /workspace
+    allow_file_operations: true
+    allow_terminal: true
+    auto_approve: false
+    env_vars:
+      NO_BROWSER: "1"
+  claude:
+    type: acp
+    provider: custom
+    command: /usr/local/bin/node
+    args:
+      - /opt/acp-adapters/claude-agent-acp/dist/index.js
+    display_name: Claude Agent ACP
+    description: Claude Agent SDK through the official Agent Client Protocol adapter.
+    cwd: /workspace
+    allow_file_operations: true
+    allow_terminal: true
+    auto_approve: false

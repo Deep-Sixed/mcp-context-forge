@@ -630,6 +630,18 @@ class Settings(BaseSettings):
             "(strict deployments that need immediate team/role remapping)."
         ),
     )
+    reject_internal_hs256_bearer: bool = Field(
+        default=False,
+        description=(
+            "HS256 cutover flag (2026-07-14). When true, internally-minted HS256 JWTs are "
+            "rejected as API/MCP bearer credentials UNLESS they carry token_use='session' "
+            "(the browser-SSO-issued session token), so browser login keeps working while "
+            "plain admin/CLI-minted API bearer tokens stop being accepted -- external-IdP "
+            "(Authentik) bearer tokens are unaffected either way, verified earlier in the "
+            "same call chain. Default false preserves today's dual-accept behavior. "
+            "Rollback: flip back to false and recreate, no code revert needed."
+        ),
+    )
 
     # MCP Client Authentication
     mcp_client_auth_enabled: bool = Field(default=True, description="Enable JWT authentication for MCP client operations")

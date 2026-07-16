@@ -146,10 +146,13 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
 
         # Try to extract token from multiple sources
         token = None
+        is_cookie_source = False
 
         # 1. Try manual cookie reading
         if request.cookies:
             token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
+            if token:
+                is_cookie_source = True
 
         # 2. Try configured authentication header (default: Authorization)
         if not token:
@@ -158,6 +161,7 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                 scheme, _, credentials_value = auth_header.partition(" ")
                 if scheme.lower() == "bearer" and credentials_value:
                     token = credentials_value
+                    is_cookie_source = False
 
         # If no token found, continue without user context
         if not token:
@@ -178,7 +182,7 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
         # We only create a DB session here when security logging is enabled
         try:
             credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-            user = await get_current_user(credentials, request=request)
+            user = await get_current_user(credentials, request=request, is_cookie_source=is_cookie_source)
 
             # Note: EmailUser uses 'email' as primary key, not 'id'
             # User is already detached (created with fresh session that was closed)

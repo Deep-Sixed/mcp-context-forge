@@ -2798,6 +2798,44 @@ class A2AAgentMetricsHourly(Base):
 
 
 # ===================================
+# MetaRouter routing telemetry
+# ===================================
+
+
+class RoutingRecord(Base):
+    """Redacted routing decision emitted by MetaRouter."""
+
+    __tablename__ = "routing_records"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    request_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True, index=True)
+    request_type: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    provider: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    pool: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    model: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    used_fallback: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    attempts: Mapped[List[Dict[str, Any]]] = mapped_column(JSON, nullable=False)
+    http_status: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    latency_ms: Mapped[float] = mapped_column(Float, nullable=False)
+    token_usage: Mapped[Optional[Dict[str, int]]] = mapped_column(JSON, nullable=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    streaming: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("attempt_count >= 0", name="ck_routing_records_attempt_count"),
+        CheckConstraint("schema_version >= 1", name="ck_routing_records_schema_version"),
+        CheckConstraint("http_status >= 100 AND http_status <= 599", name="ck_routing_records_http_status"),
+        CheckConstraint("latency_ms >= 0", name="ck_routing_records_latency_ms"),
+        Index("idx_routing_records_timestamp", "timestamp"),
+        Index("idx_routing_records_provider_model", "provider", "model"),
+    )
+
+
+# ===================================
 # Observability Models (OpenTelemetry-style traces, spans, events)
 # ===================================
 
@@ -5671,6 +5709,9 @@ class SSOProvider(Base):
     api_audience: Mapped[Optional[str]] = mapped_column(
         String(500), nullable=True
     )  # Expected `aud` to enforce on inbound access tokens (e.g. Entra api://<app-id-uri>); must be non-empty when trusted_for_api_auth is set
+    browser_login_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False
+    )  # Whether this provider appears as a button on the interactive login page. API-only/M2M provider rows (trusted_for_api_auth=True, client_credentials-only) should set this False so they never surface as a human SSO option.
 
     # Provider Settings
     trusted_domains: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)

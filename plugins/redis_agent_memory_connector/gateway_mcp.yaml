@@ -1,0 +1,11 @@
+gateway:
+  name: redis-agent-memory
+  description: "Redis Agent Memory MCP endpoint for the JARVIS namespace."
+  url: "http://host.docker.internal:8101/mcp"
+  transport: STREAMABLEHTTP
+  visibility: public
+  tags:
+    - evecor
+    - memory
+    - redis
+    - agent-memory

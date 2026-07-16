@@ -101,7 +101,7 @@ from mcpgateway.utils.verify_credentials import (
     get_auth_header_value,
     is_proxy_auth_trust_active,
     require_auth_header_first,
-    verify_credentials,
+    verify_credentials_cached,
     verify_oauth_access_token,
 )
 
@@ -5003,7 +5003,14 @@ class _StreamableHttpAuthHandler:
             return routed
 
         try:
-            user_payload = await verify_credentials(token)
+            # Canonical verifier consolidation (2026-07-14): verify_credentials_cached()
+            # tries trusted external-IdP bearer verification first, falling back to
+            # internal HS256 verification unchanged -- additive only, matches the same
+            # change made in auth.py's get_current_user(). No Starlette Request object
+            # is available at this ASGI layer (self.scope is a raw dict); passing None
+            # is safe -- the callee creates its own DB session when request is None.
+            # See contextforge-hs256-cutover-design memory.
+            user_payload = await verify_credentials_cached(token, None)
             # Store enriched user context with normalized teams
             if not isinstance(user_payload, dict):
                 return True
@@ -5334,14 +5341,21 @@ class _StreamableHttpAuthHandler:
             return False  # Error response already sent
         # OAuthAuthResult.NOT_APPLICABLE — this handler is not responsible for
         # the token (target server is not oauth_enabled, token's issuer is
-        # outside the allowlist, or the URL carries no server id). When
-        # internal issuer verification is enabled, an iss mismatch will be
-        # rejected by verify_credentials() anyway, so short-circuit with the
-        # canonical 401. When it is disabled, fall through so legacy internal
-        # JWTs whose iss differs from settings.jwt_issuer remain accepted.
+        # outside the allowlist, or the URL carries no server id). Always
+        # fall through to verify_credentials_cached() (2026-07-14 canonical
+        # verifier consolidation) rather than short-circuiting here: the old
+        # comment's assumption that "an iss mismatch will be rejected by
+        # verify_credentials() anyway" was written when that call was the
+        # uncached, internal-only verifier. verify_credentials_cached() now
+        # also tries trusted external-IdP bearer verification (per-provider
+        # opt-in, independent of this oauth_enabled side-channel) before
+        # falling back to internal HS256 -- short-circuiting here would deny
+        # a legitimately trusted external-IdP token before it gets that
+        # chance. verify_credentials_cached() performs its own trusted-issuer
+        # check and correctly 401s untrusted issuers either way, so no
+        # security regression from removing this short-circuit. See
+        # contextforge-hs256-cutover-design memory.
         oauth_verify_events_counter.labels(outcome="not_applicable").inc()
-        if settings.jwt_issuer_verification:
-            return await self._send_error(detail="Invalid authentication credentials", headers={"WWW-Authenticate": "Bearer"})
         return None
 
     async def _try_oauth_access_token(self, token: str, unverified: Optional[Dict[str, Any]] = None) -> OAuthAuthResult:  # noqa: PLR0911

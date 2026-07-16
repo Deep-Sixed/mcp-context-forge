@@ -1,0 +1,264 @@
+# ContextForge — fresh install (IBM/mcp-context-forge v1.0.5), Docker Desktop.
+# Replaces the docker-ce RouterCore deployment; see
+# /home/jarvis/.claude/plans/serialized-hugging-penguin.md for the full migration plan.
+# Run via scripts/start-contextforge-keepass.sh, which resolves secrets from KeePassXC.
+#
+# Phase 7 cutover complete (2026-07-14): default port is 4444. CONTEXTFORGE_PORT
+# remains overridable for a temporary side-by-side validation deployment if ever needed.
+
+name: contextforge
+
+services:
+  contextforge-core-db:
+    container_name: contextforge-core-db
+    # Standard EVECOR Postgres+pgvector base (same as RouterCore/Authentik/
+    # ai_dba_workbench) — needed because the restored dump uses pg_textsearch
+    # and vector extensions unavailable in plain postgres images.
+    image: hindsight-postgress-db:latest
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: contextforge
+      POSTGRES_DB: contextforge
+      POSTGRES_PASSWORD_FILE: "/run/secrets/contextforge_db_password"
+    secrets:
+      - contextforge_db_password
+    volumes:
+      - db-data:/var/lib/postgresql
+    ports:
+      - "127.0.0.1:${CONTEXTFORGE_DB_PORT:-5447}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U contextforge"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks:
+      - contextforge-net
+      - contextforge-runtime
+
+  contextforge-redis:
+    container_name: contextforge-redis
+    image: redis:latest
+    restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    command:
+      - "redis-server"
+      - "--maxmemory"
+      - "1gb"
+      - "--maxmemory-policy"
+      - "allkeys-lru"
+      - "--tcp-backlog"
+      - "2048"
+      - "--timeout"
+      - "0"
+      - "--tcp-keepalive"
+      - "300"
+      - "--maxclients"
+      - "10000"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks:
+      - contextforge-net
+
+  contextforge-agentpool:
+    container_name: contextforge-agentpool
+    image: contextforge-agentpool:acp-20260713
+    build:
+      context: .
+      dockerfile: docker/agentpool/Dockerfile
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+    ports:
+      - "127.0.0.1:${CONTEXTFORGE_AGENTPOOL_PORT:-18020}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8000), timeout=5).close()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    labels:
+      contextforge.group: "contextforge"
+      contextforge.class: "mcp-and-acp"
+      contextforge.registry_name: "agentpool"
+      contextforge.source.agentpool: "b6ddbea9cb66173c096942ac57397b636e0a2248"
+      contextforge.source.acp-schema: "12bb33a4bd1c0636bf34a68791b30f34e33ad420"
+      contextforge.source.codex-acp: "75893cd87741b2fe127f6698a8741a2e625c3787"
+      contextforge.source.claude-agent-acp: "9cd48c597af68f630774ec00bc3adc85f6b0fd4b"
+    networks:
+      - contextforge-net
+      - contextforge-runtime
+
+  contextforge-mcacp:
+    container_name: contextforge-mcacp
+    image: contextforge-agentpool:acp-20260713
+    restart: unless-stopped
+    init: true
+    read_only: true
+    command: >-
+      supergateway --stdio "node /opt/mcacp/dist/index.js"
+      --outputTransport streamableHttp --port 8000 --streamableHttpPath /mcp
+      --healthEndpoint /healthz --stateful --logLevel info
+    environment:
+      HOME: /tmp/mcacp
+      XDG_CACHE_HOME: /tmp/mcacp-cache
+      XDG_CONFIG_HOME: /tmp/mcacp-config
+      XDG_DATA_HOME: /tmp/mcacp-data
+      NO_BROWSER: "1"
+    tmpfs:
+      - /tmp:mode=1777
+    volumes:
+      - mcacp-data:/var/lib/mcacp
+    ports:
+      - "127.0.0.1:${CONTEXTFORGE_MCACP_PORT:-18021}:8000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8000/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    labels:
+      contextforge.group: "contextforge"
+      contextforge.class: "mcp-to-acp"
+      contextforge.registry_name: "mcacp"
+      contextforge.source.mcacp: "cf3f452470cf5144f1baf216f6f9aed39bc6eb92"
+      contextforge.source.codex-acp: "75893cd87741b2fe127f6698a8741a2e625c3787"
+      contextforge.source.claude-agent-acp: "9cd48c597af68f630774ec00bc3adc85f6b0fd4b"
+    networks:
+      - contextforge-net
+      - contextforge-runtime
+
+  contextforge:
+    container_name: contextforge
+    image: contextforge:latest
+    build:
+      context: .
+      dockerfile: Containerfile
+      # Host CPU (i7-4930K, Ivy Bridge-E) predates the x86-64-v3 baseline
+      # (needs AVX2/BMI2) that UBI10's glibc requires. UBI9 only needs
+      # x86-64-v2, which this CPU supports. See Containerfile:37-52.
+      args:
+        UBI_BASE: registry.access.redhat.com/ubi9:latest
+        NODEJS_IMAGE: registry.access.redhat.com/ubi9/nodejs-20:latest
+        UBI_MINIMAL: registry.access.redhat.com/ubi9/ubi-minimal:latest
+    restart: unless-stopped
+    shm_size: 512mb
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - .env
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "4444"
+      HTTP_SERVER: gunicorn
+      GUNICORN_WORKERS: "8"
+      CACHE_TYPE: redis
+      REDIS_URL: "redis://contextforge-redis:6379/0"
+      JWT_ALGORITHM: HS256
+      JWT_AUDIENCE: mcpgateway-api
+      JWT_ISSUER: mcpgateway
+      EMAIL_AUTH_ENABLED: "${EMAIL_AUTH_ENABLED:-true}"
+      PLATFORM_ADMIN_EMAIL: "charles.snyder.career@gmail.com"
+      MCPGATEWAY_UI_ENABLED: "true"
+      MCPGATEWAY_ADMIN_API_ENABLED: "true"
+      GATEWAY_ASYNC_LIFECYCLE_ENABLED: "true"
+      SSRF_ALLOW_LOCALHOST: "true"
+      SSRF_ALLOW_PRIVATE_NETWORKS: "true"
+      PLUGINS_ENABLED: "true"
+      PLUGINS_CONFIG_FILE: "plugins/config.yaml"
+      CAREER_OPS_ROOT: "/app/career-ops-host"
+      CAREER_OPS_FEED_ENABLED: "true"
+      MCPGATEWAY_CATALOG_ENABLED: "true"
+      MCPGATEWAY_CATALOG_FILE: "/app/mcp-catalog.yml"
+      AUTH_REQUIRED: "true"
+      MCP_CLIENT_AUTH_ENABLED: "true"
+      MCP_REQUIRE_AUTH: "true"
+      SSO_ENABLED: "true"
+      SSO_API_TOKEN_AUTH_ENABLED: "true"
+      # HS256 cutover (2026-07-15, operator-approved, original 4-client scope
+      # only -- see contextforge-hs256-cutover-design memory §10). Internal
+      # HS256 bearers rejected for API/MCP; browser-SSO session cookie login
+      # still works via the is_cookie_source-gated exemption in
+      # verify_credentials_cached(). Wired here (not just docker exec) so it
+      # survives every recreate, including .env regeneration by
+      # start-contextforge-keepass.sh.
+      REJECT_INTERNAL_HS256_BEARER: "true"
+      SSO_GENERIC_ENABLED: "true"
+      SSO_GENERIC_PROVIDER_ID: "authentik"
+      SSO_GENERIC_DISPLAY_NAME: "Authentik"
+      # TLS migration (2026-07-14): Authentik now terminates TLS itself on its
+      # mapped 9443->9444 port, using a proper CA-flagged cert trusted via the
+      # ca-bundle-with-authentik.pem mount above — no insecure/skip-verify flags
+      # anywhere. authorization_url is browser-facing (user's browser hits this
+      # directly); token/userinfo/jwks are server-to-server from inside this
+      # container, so they need host.docker.internal, not 127.0.0.1.
+      SSO_GENERIC_AUTHORIZATION_URL: "https://127.0.0.1:9444/application/o/authorize/"
+      SSO_GENERIC_TOKEN_URL: "https://host.docker.internal:9444/application/o/token/"
+      SSO_GENERIC_USERINFO_URL: "https://host.docker.internal:9444/application/o/userinfo/"
+      # Authentik derives the id_token's iss claim from the Host header of the
+      # request that hit its token endpoint (server-to-server, host.docker.internal
+      # here), not from the browser-facing authorization_url — this must match
+      # token_url's host+scheme or verification fails with InvalidIssuerError.
+      SSO_GENERIC_ISSUER: "https://host.docker.internal:9444/application/o/contextforge/"
+      SSO_GENERIC_JWKS_URI: "https://host.docker.internal:9444/application/o/contextforge/jwks/"
+      SSO_GENERIC_SCOPE: "openid profile email groups"
+      SSO_GENERIC_GROUPS_CLAIM: "groups"
+      SSO_GENERIC_ADMIN_GROUPS: "authentik Admins"
+      SSO_AUTO_CREATE_USERS: "true"
+      APP_DOMAIN: "http://127.0.0.1:4444"
+      # Deployment is plain HTTP on localhost (no TLS termination) — a Secure-flagged
+      # cookie is silently dropped by the browser, breaking SSO's state-binding cookie.
+      SECURE_COOKIES: "false"
+    ports:
+      - "127.0.0.1:${CONTEXTFORGE_PORT:-4444}:4444"
+    volumes:
+      - ./plugins:/app/plugins:ro
+      - /mnt/jarvis-data/projects/third-party/career-ops-main:/app/career-ops-host:ro
+      - /mnt/jarvis-data/projects/.state/routercore/dream:/home/appuser/.evecor/dream
+      # Trusted CA bundle (certifi defaults + Friday box's internal Authentik TLS
+      # CA) — bind-mounted over certifi's own path so every httpx/requests client
+      # in the app picks it up with no code changes and no insecure verify flags.
+      # See certs/README.md and contextforge-hs256-cutover-design memory.
+      - ./certs/ca-bundle-with-authentik.pem:/app/.venv/lib64/python3.12/site-packages/certifi/cacert.pem:ro
+    depends_on:
+      contextforge-core-db:
+        condition: service_healthy
+      contextforge-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import httpx,sys;sys.exit(0 if httpx.get('http://localhost:4444/health',timeout=5).status_code==200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - contextforge-net
+      - contextforge-runtime
+
+networks:
+  contextforge-net:
+    name: contextforge-net
+  contextforge-runtime:
+    name: contextforge-runtime
+    external: true
+
+volumes:
+  db-data:
+    name: contextforge_db_data
+  redis-data:
+    name: contextforge_redis_data
+  mcacp-data:
+    name: contextforge_mcacp_data
+
+secrets:
+  contextforge_db_password:
+    file: ${CONTEXTFORGE_SECRET_DIR:?Run via scripts/start-contextforge-keepass.sh, which sets CONTEXTFORGE_SECRET_DIR}/db_password

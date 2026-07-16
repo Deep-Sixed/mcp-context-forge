@@ -1,0 +1,20 @@
+{
+  "agent_servers": {
+    "codex-acp": {
+      "command": "/usr/local/bin/node",
+      "args": ["/opt/acp-adapters/codex-acp/dist/index.js"],
+      "permissionPolicy": "operator",
+      "autoReapMs": 300000
+    },
+    "claude-agent-acp": {
+      "command": "/usr/local/bin/node",
+      "args": ["/opt/acp-adapters/claude-agent-acp/dist/index.js"],
+      "permissionPolicy": "operator",
+      "autoReapMs": 300000
+    }
+  },
+  "defaultPermissionPolicy": "operator",
+  "sessionDir": "/var/lib/mcacp/sessions",
+  "installDir": "/var/lib/mcacp/agents",
+  "collectFeedback": false
+}

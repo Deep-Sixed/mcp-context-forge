@@ -1,0 +1,35 @@
+# Career-ops bridge — REFERENCE COPY.
+#
+# Edit plugins/config.yaml to change live behaviour. This file documents the intended
+# EVECOR wiring for career-ops agents on ContextForge.
+#
+# Prerequisites:
+#   - CAREER_OPS_FEED_ENABLED=true on the gateway
+#   - career-ops data/ mounted (see compose.yml CAREER_OPS_ROOT)
+#   - REST tools registered from plugins/career_ops_bridge/gateway_tools.yaml
+#   - ContextForge secret holding ROUTERCORE_MCP_BEARER_TOKEN (localhost feed auth)
+
+plugins:
+  - name: "CareerOpsBridge"
+    kind: "plugins.career_ops_bridge.career_ops_bridge.CareerOpsBridgePlugin"
+    description: >-
+      Inject career-ops skill context on agent invoke; authenticate career_ops_* REST
+      tools; remind agents that the full ContextForge MCP catalog is available.
+    version: "0.1.0"
+    author: "EVECOR"
+    hooks: ["agent_pre_invoke", "tool_pre_invoke"]
+    tags: ["evecor", "career-ops", "skill", "bridge"]
+    mode: "disabled" # -> "transform" when feed + tools + secret are ready
+    priority: 140
+    conditions: []
+    config:
+      activation:
+        always_on: false
+        session_tags: ["career-ops"]
+        agent_id_prefixes: []
+      skill_path: null
+      bearer_secret: "routercore.mcp.bearer"
+      fail_mode: "open"
+      career_ops_tools:
+        - "career_ops_ingest"
+        - "career_ops_search"

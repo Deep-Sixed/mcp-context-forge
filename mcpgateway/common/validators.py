@@ -1523,7 +1523,9 @@ class SecurityValidator:
                         raise ValueError(f"{field_name} contains private network address which is blocked by SSRF protection")
 
     @classmethod
-    async def validate_gateway_test_url(cls, value: str, allowed_hosts: list[str], field_name: str = "URL") -> dict[str, str]:
+    async def validate_gateway_test_url(
+        cls, value: str, allowed_hosts: list[str], field_name: str = "URL", allow_private_networks: bool = False
+    ) -> dict[str, str]:
         """Validate URLs for the /admin/gateways/test endpoint with allowlist enforcement.
 
         This method implements strict validation for the gateway test endpoint to prevent
@@ -1648,7 +1650,15 @@ class SecurityValidator:
             # Block multicast (224.0.0.0/4, ff00::/8)
             # Block reserved (240.0.0.0/4)
             # Block carrier-grade NAT (100.64.0.0/10)
-            if ip_addr.is_private or ip_addr.is_loopback or ip_addr.is_link_local or ip_addr.is_unspecified or ip_addr.is_multicast or ip_addr.is_reserved or is_cgnat:
+            if (
+                ip_addr.is_loopback
+                or ip_addr.is_link_local
+                or ip_addr.is_unspecified
+                or ip_addr.is_multicast
+                or ip_addr.is_reserved
+                or is_cgnat
+                or (ip_addr.is_private and not allow_private_networks)
+            ):
                 raise ValueError(f"{field_name} is not allowed")
         except ValueError as e:
             # If it's our security error, re-raise it
@@ -1682,7 +1692,15 @@ class SecurityValidator:
                         cgnat_network = ipaddress.IPv4Network("100.64.0.0/10")
                         is_cgnat = resolved_ip in cgnat_network
 
-                    if resolved_ip.is_private or resolved_ip.is_loopback or resolved_ip.is_link_local or resolved_ip.is_unspecified or resolved_ip.is_multicast or resolved_ip.is_reserved or is_cgnat:
+                    if (
+                        resolved_ip.is_loopback
+                        or resolved_ip.is_link_local
+                        or resolved_ip.is_unspecified
+                        or resolved_ip.is_multicast
+                        or resolved_ip.is_reserved
+                        or is_cgnat
+                        or (resolved_ip.is_private and not allow_private_networks)
+                    ):
                         raise ValueError(f"{field_name} is not allowed")
 
                     resolved_ips.append(str(resolved_ip))

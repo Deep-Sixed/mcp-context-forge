@@ -99,7 +99,7 @@ from mcpgateway.utils.trace_context import (
 from mcpgateway.utils.verify_credentials import (
     ConfigurableHTTPBearer,
     security,
-    verify_jwt_token_cached,
+    verify_credentials_cached,
 )
 
 __all__ = [
@@ -1255,7 +1255,7 @@ class TokenValidationError(Exception):
         self.original = original
 
 
-async def validate_token_user(request: Request, token: str) -> EmailUser:
+async def validate_token_user(request: Request, token: str, is_cookie_source: bool = False) -> EmailUser:
     """Validate a bearer token through the full get_current_user() stack.
 
     This is the single shared validation path for all admin-token checks.
@@ -1265,6 +1265,10 @@ async def validate_token_user(request: Request, token: str) -> EmailUser:
     Args:
         request: FastAPI request object (for request-level caching and state).
         token: Raw JWT token string (from cookie or header).
+        is_cookie_source: True only when the caller positively confirmed this
+            token was read from the designated session cookie in this exact
+            request (not merely "present somewhere"). Required for the HS256
+            cutover's cookie-vs-bearer distinction -- see verify_credentials_cached.
 
     Returns:
         EmailUser: The fully validated, authenticated user.
@@ -1279,7 +1283,7 @@ async def validate_token_user(request: Request, token: str) -> EmailUser:
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
 
     try:
-        return await get_current_user(credentials, request=request)
+        return await get_current_user(credentials, request=request, is_cookie_source=is_cookie_source)
     except HTTPException as exc:
         raise TokenValidationError(
             str(exc.detail),
@@ -1318,6 +1322,7 @@ def _bootstrap_platform_admin_user(email: str) -> "EmailUser":
 async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     request: Request = None,  # type: ignore[assignment]
+    is_cookie_source: bool = False,
 ) -> EmailUser:
     """Get current authenticated user from JWT token with revocation checking.
 
@@ -1326,6 +1331,14 @@ async def get_current_user(
     Args:
         credentials: HTTP authorization credentials
         request: Optional request object for plugin hooks
+        is_cookie_source: True only when the caller positively confirmed
+            `credentials.credentials` was read from the designated session
+            cookie in this exact request. When used as a raw FastAPI
+            `Depends(get_current_user)` dependency, `credentials` always comes
+            from the Authorization header (never cookies) so the default
+            False is correct there. Callers that manually construct
+            `credentials` from a cookie-sourced token (e.g. validate_token_user)
+            must pass True explicitly. See verify_credentials_cached.
 
     Returns:
         EmailUser: Authenticated user
@@ -1556,9 +1569,14 @@ async def get_current_user(
     email = None
 
     try:
-        # Try JWT token first using the centralized verify_jwt_token_cached function
+        # Canonical verifier consolidation (2026-07-14): verify_credentials_cached()
+        # tries trusted external-IdP bearer verification first (per-provider opt-in,
+        # SSO_API_TOKEN_AUTH_ENABLED + SSOProvider.trusted_for_api_auth), falling back
+        # to internal HS256 verification via verify_jwt_token_cached() unchanged --
+        # additive only, internal token issuance/acceptance is untouched this phase.
+        # See contextforge-hs256-cutover-design memory.
         logger.debug("Attempting JWT token validation")
-        payload = await verify_jwt_token_cached(credentials.credentials, request)
+        payload = await verify_credentials_cached(credentials.credentials, request, is_cookie_source=is_cookie_source)
 
         logger.debug("JWT token validated successfully")
         # Extract user identifier (support both new and legacy token formats)

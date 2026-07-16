@@ -306,6 +306,13 @@ class TestTokenScopingMiddleware:
         assert result is False, "POST /mcp should be denied when token has only non-MCP permissions"
 
     @pytest.mark.asyncio
+    async def test_routing_telemetry_endpoint_requires_system_config_permission(self, middleware):
+        """Scoped telemetry tokens must reach the route's existing RBAC guard."""
+        for path in ("/telemetry/routing-records", "/v1/telemetry/routing-records"):
+            assert middleware._check_permission_restrictions(path, "POST", [Permissions.ADMIN_SYSTEM_CONFIG]) is True
+            assert middleware._check_permission_restrictions(path, "POST", [Permissions.ADMIN_METRICS]) is False
+
+    @pytest.mark.asyncio
     async def test_sse_endpoint_allowed_with_servers_use_permission(self, middleware):
         """GET /sse must be reachable for tokens that carry servers.use.
 

@@ -1,0 +1,115 @@
+# EVECOR control-surface plugins — REFERENCE COPY.
+#
+# These four entries were applied to the authored source-of-truth `plugins/config.yaml`
+# (the file the gateway loads; Jinja is rendered in-memory at load, it is NOT generated from a
+# template, so this is the correct layer to edit — a re-render will not wipe them). This file is
+# kept as the standalone reference; edit `plugins/config.yaml` to change live behaviour.
+#
+# All four ship DISABLED — they load and register but execute nothing until you:
+#   1. stand up the service's out-of-process listener (UDS preferred),
+#   2. set `endpoint.socket_path` (or `endpoint.base_url`),
+#   3. for GATES, choose `fail_mode` ("open" or "closed") — there is no default,
+#   4. flip `mode` (gates -> "sequential", observers -> "fire_and_forget").
+#
+# Why out-of-process: the services pin Python >=3.14 (agentsync) / >=3.12 (stele); the gateway
+# runs 3.14, so they cannot be imported in-process. The adapters call them over a Unix socket.
+#
+# Live-path ordering is EXPLICIT (lower priority = earlier):
+#   tool_pre_invoke:  TruthGuardGate (10)  -> AgentSyncEnforcer (20)
+#     TruthGuard catches dangerous/phantom/tool-safety first; AgentSync then applies project
+#     policy/obligation enforcement on what survived.
+#   tool_post_invoke: ReconRecorder (80)   -> LedgerWriter (90)   (observe-only, never block)
+#
+# Gate timeout == down: a gate slow past `endpoint.timeout_ms` raises and resolves through the
+# SAME `fail_mode` decision as unreachable/socket-missing/malformed (closed -> block/503,
+# open -> allow, ERROR either way). No gate call may wait indefinitely on tool_pre_invoke.
+
+plugins:
+  # ---- GATES (tool_pre_invoke, may block) ----------------------------------------------
+  - name: "TruthGuardGate"
+    kind: "plugins.truthguard_gate.truthguard_gate.TruthGuardGate"
+    description: "Blocks dangerous/phantom tool invocations via the out-of-process TruthGuard service."
+    version: "0.1.0"
+    author: "EVECOR"
+    hooks: ["tool_pre_invoke"]
+    tags: ["evecor", "gate", "truthguard", "safety"]
+    mode: "disabled" # -> "sequential" to enforce
+    priority: 10 # runs FIRST on tool_pre_invoke
+    conditions: []
+    config:
+      fail_mode: "closed" # REQUIRED when enabled: "closed" blocks if gate is down, "open" allows + alerts
+      endpoint:
+        socket_path: "" # e.g. /run/evecor/truthguard.sock  (preferred)
+        base_url: "" # e.g. http://127.0.0.1:8781  (loopback alternative)
+        path: "/v1/gate"
+        timeout_ms: 25 # tight: slow-past-this resolves through fail_mode
+
+  - name: "AgentSyncEnforcer"
+    kind: "plugins.agentsync_enforcer.agentsync_enforcer.AgentSyncEnforcer"
+    description: "Enforces AgentSync rules/obligations on tool invocations via the out-of-process AgentSync service."
+    version: "0.1.0"
+    author: "EVECOR"
+    hooks: ["tool_pre_invoke"]
+    tags: ["evecor", "gate", "agentsync", "policy"]
+    mode: "disabled" # -> "sequential" to enforce
+    priority: 20 # runs after TruthGuard
+    conditions: []
+    config:
+      fail_mode: "closed" # REQUIRED when enabled
+      endpoint:
+        socket_path: "" # e.g. /run/evecor/agentsync.sock
+        base_url: ""
+        path: "/v1/gate"
+        timeout_ms: 25
+
+  # ---- OBSERVERS (tool_post_invoke, never block) ---------------------------------------
+  - name: "ReconRecorder"
+    kind: "plugins.recon_recorder.recon_recorder.ReconRecorder"
+    description: "Flight-records each tool invocation to the out-of-process RECON service (fire-and-forget)."
+    version: "0.1.0"
+    author: "EVECOR"
+    hooks: ["tool_post_invoke"]
+    tags: ["evecor", "observer", "recon", "audit"]
+    mode: "fire_and_forget"
+    priority: 80 # observers run late
+    conditions: []
+    config:
+      endpoint:
+        socket_path: ""
+        base_url: "http://host.docker.internal:8773"
+        path: "/v1/record"
+        timeout_ms: 250
+
+  - name: "LedgerWriter"
+    kind: "plugins.ledger_writer.ledger_writer.LedgerWriter"
+    description: "Appends each tool invocation to the out-of-process Ledger service (fire-and-forget)."
+    version: "0.1.0"
+    author: "EVECOR"
+    hooks: ["tool_post_invoke"]
+    tags: ["evecor", "observer", "ledger", "provenance"]
+    mode: "disabled" # -> "fire_and_forget" to activate
+    priority: 90 # after recon
+    conditions: []
+    config:
+      endpoint:
+        socket_path: ""
+        base_url: "http://host.docker.internal:8774"
+        path: "/v1/record"
+        timeout_ms: 250
+
+  - name: "WikiRecorder"
+    kind: "plugins.wiki_recorder.wiki_recorder.WikiRecorder"
+    description: "Appends each tool invocation to the WIKI corpus (raw/sessions) via the out-of-process Wiki gateway (fire-and-forget)."
+    version: "0.1.0"
+    author: "EVECOR"
+    hooks: ["tool_post_invoke"]
+    tags: ["evecor", "observer", "wiki", "corpus"]
+    mode: "disabled" # -> "fire_and_forget" to activate
+    priority: 95 # after ledger
+    conditions: []
+    config:
+      endpoint:
+        socket_path: "" # e.g. /run/evecor/wiki.sock
+        base_url: ""
+        path: "/v1/record"
+        timeout_ms: 250

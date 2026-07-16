@@ -709,7 +709,7 @@ async def _maybe_verify_external(token: str, request: Optional[Request]) -> Opti
             db.close()
 
 
-async def verify_credentials_cached(token: str, request: Optional[Request] = None) -> dict:
+async def verify_credentials_cached(token: str, request: Optional[Request] = None, is_cookie_source: bool = False) -> dict:
     """Verify credentials using a JWT token with request-level caching.
 
     A wrapper around verify_jwt_token_cached that adds the original token
@@ -720,6 +720,13 @@ async def verify_credentials_cached(token: str, request: Optional[Request] = Non
     Args:
         token: The JWT token string to verify.
         request: Optional FastAPI/Starlette request for request-level caching.
+        is_cookie_source: True only when the caller positively confirmed this
+            exact token value was read from the designated session cookie in
+            THIS request (not merely present anywhere in headers/cookies).
+            Every caller must compute this locally from its own cookie/header
+            extraction logic -- never infer it from a token claim. Defaults to
+            False so any caller that doesn't explicitly pass it (e.g. MCP
+            transport, WebSocket bearer auth) is treated as bearer-sourced.
 
     Returns:
         dict: The validated token payload with the original token added
@@ -732,6 +739,21 @@ async def verify_credentials_cached(token: str, request: Optional[Request] = Non
         return external_payload
 
     payload = await verify_jwt_token_cached(token, request)
+
+    # HS256 cutover (2026-07-14, corrected 2026-07-15 per architecture review):
+    # once flipped, internal HS256 bearers are rejected for API/MCP use.
+    # Browser-SSO session tokens (token_use="session") are exempt ONLY when
+    # this specific request presented the token via the designated session
+    # cookie -- verified by transport source (is_cookie_source), never by the
+    # token's own self-declared token_use claim alone. A session token copied
+    # out of a cookie and replayed via `Authorization: Bearer` is rejected,
+    # since is_cookie_source is False for any header-sourced token regardless
+    # of what token_use claims. See contextforge-hs256-cutover-design memory.
+    if getattr(settings, "reject_internal_hs256_bearer", False):
+        session_via_cookie = is_cookie_source and payload.get("token_use") == "session"
+        if not session_via_cookie:
+            _raise_auth_401("Internal HS256 bearer tokens are no longer accepted for API/MCP access; use an Authentik-issued credential")
+
     # Return a copy with token added to avoid mutating the cached payload
     return {**payload, "token": token}
 
@@ -1022,20 +1044,24 @@ async def require_auth(request: Request, credentials: Optional[HTTPAuthorization
 
     # Standard JWT authentication flow - prioritize manual cookie reading
     token = None
+    is_cookie_source = False
 
     # 1. First try manual cookie reading (most reliable)
     if hasattr(request, "cookies") and request.cookies:
         manual_token = request.cookies.get("jwt_token")
         if manual_token:
             token = manual_token
+            is_cookie_source = True
 
     # 2. Then try Authorization header
     if not token and credentials and credentials.credentials:
         token = credentials.credentials
+        is_cookie_source = False
 
     # 3. Finally try FastAPI Cookie dependency (fallback)
     if not token and jwt_token:
         token = jwt_token
+        is_cookie_source = True
 
     if settings.auth_required and not token:
         _raise_auth_401("Not authenticated")
@@ -1043,7 +1069,7 @@ async def require_auth(request: Request, credentials: Optional[HTTPAuthorization
     if not token:
         return "anonymous"
 
-    payload = await verify_credentials_cached(token, request)
+    payload = await verify_credentials_cached(token, request, is_cookie_source=is_cookie_source)
     await _enforce_revocation_and_active_user(payload)
     return payload
 
@@ -1594,18 +1620,23 @@ async def require_auth_header_first(
 
     # Header-first JWT token resolution
     token: str | None = None
+    is_cookie_source = False
 
     # 1. Authorization Bearer header (highest priority — matches middleware)
     if scheme.lower() == "bearer" and param:
         token = param
+        is_cookie_source = False
 
     # 2. Cookie from request.cookies
     if not token and hasattr(request, "cookies") and request.cookies:
         token = request.cookies.get("jwt_token") or None
+        if token:
+            is_cookie_source = True
 
     # 3. jwt_token keyword argument
     if not token and jwt_token:
         token = jwt_token
+        is_cookie_source = True
 
     if settings.auth_required and not token:
         raise HTTPException(
@@ -1613,7 +1644,7 @@ async def require_auth_header_first(
             detail="Not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return await verify_credentials_cached(token, request) if token else "anonymous"
+    return await verify_credentials_cached(token, request, is_cookie_source=is_cookie_source) if token else "anonymous"
 
 
 async def require_admin_auth(

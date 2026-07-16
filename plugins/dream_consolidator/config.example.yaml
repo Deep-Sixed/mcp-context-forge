@@ -1,0 +1,22 @@
+# Dream Consolidator — add to RouterCore/plugins/config.yaml under `plugins:`.
+#
+# Native plugin: `kind` is the fully-qualified class path (NOT "external").
+# Observer discipline: mode fire_and_forget, runs after Recon (80) and
+# Ledger (90) on tool_post_invoke.
+- name: "DreamConsolidator"
+  kind: "plugins.dream_consolidator.dream_consolidator.DreamConsolidator"
+  description: "Thin observer feeding the Dreaming memory-consolidation service."
+  version: "1.0.0"
+  author: "EVECOR"
+  hooks: ["prompt_post_fetch", "tool_post_invoke", "agent_post_invoke"]
+  tags: ["evecor", "memory", "consolidation", "observer", "dream"]
+  mode: "fire_and_forget"
+  priority: 95
+  conditions: []
+  config:
+    enabled: true
+    max_field_chars: 4096
+    endpoint:
+      socket_path: "~/.evecor/dream/gateway.sock"
+      path: "/v1/hook"
+      timeout_ms: 1000
