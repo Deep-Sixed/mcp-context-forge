@@ -1304,7 +1304,7 @@ plugins:
     author: "EVECOR"
     hooks: ["tool_post_invoke"]
     tags: ["evecor", "observer", "ledger", "provenance"]
-    mode: "disabled" # AgentSync production stand-down; endpoint retained as historical wiring
+    mode: "fire_and_forget" # re-enabled 2026-07-17: receiver is the Flight Recorder ledger gateway (:8774). NOTE: after any contextforge restart, also restart evecor-contextforge-mcp-proxy (user unit) — the :8891 proxy holds a stale upstream session and every federated call errors until it reconnects
     priority: 90 # after recon
     conditions: []
     config:
@@ -1615,9 +1615,9 @@ plugins:
       enabled: true
       max_field_chars: 4096
       endpoint:
-        # Absolute container path: EvecorObserverAdapter passes this to httpx
-        # verbatim (no expanduser). /home/appuser/.evecor/dream is the bind mount
-        # of /mnt/jarvis-data/projects/.state/routercore/dream (v2 gateway socket).
-        socket_path: "/home/appuser/.evecor/dream/gateway.sock"
+        # Docker Desktop's virtiofs mount mirrors the socket inode but cannot
+        # carry a live UDS connection. This loopback-only host bridge forwards
+        # TCP requests to the canonical gateway.sock without LAN exposure.
+        base_url: "http://host.docker.internal:8777"
         path: "/v1/hook"
         timeout_ms: 1000
