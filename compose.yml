@@ -67,40 +67,6 @@ services:
     networks:
       - contextforge-net
 
-  contextforge-agentpool:
-    container_name: contextforge-agentpool
-    # Tag diverges from mcacp's acp-20260713 on purpose: acp-20260716 carries
-    # the codex-less agents.yml and the acp error-response patch (both
-    # agentpool-only fixes) without rebuilding under the healthy mcacp.
-    image: contextforge-agentpool:acp-20260716
-    build:
-      context: .
-      dockerfile: docker/agentpool/Dockerfile
-    restart: unless-stopped
-    init: true
-    read_only: true
-    tmpfs:
-      - /tmp:mode=1777
-    ports:
-      - "127.0.0.1:${CONTEXTFORGE_AGENTPOOL_PORT:-18020}:8000"
-    healthcheck:
-      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8000), timeout=5).close()"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    labels:
-      contextforge.group: "contextforge"
-      contextforge.class: "mcp-and-acp"
-      contextforge.registry_name: "agentpool"
-      contextforge.source.agentpool: "b6ddbea9cb66173c096942ac57397b636e0a2248"
-      contextforge.source.acp-schema: "12bb33a4bd1c0636bf34a68791b30f34e33ad420"
-      contextforge.source.codex-acp: "75893cd87741b2fe127f6698a8741a2e625c3787"
-      contextforge.source.claude-agent-acp: "9cd48c597af68f630774ec00bc3adc85f6b0fd4b"
-    networks:
-      - contextforge-net
-      - contextforge-runtime
-
   contextforge-mcacp:
     container_name: contextforge-mcacp
     image: contextforge-agentpool:acp-20260713
