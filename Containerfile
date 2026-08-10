@@ -270,7 +270,7 @@ RUN if [ "$(uname -m)" = "s390x" ] || [ "$(uname -m)" = "ppc64le" ]; then \
 # Everything else (rust binaries, frontend static, app code) is copied AFTER
 # the heavy venv install so those changes don't invalidate the dep layer.
 # ----------------------------------------------------------------------------
-COPY pyproject.toml /app/
+COPY pyproject.toml uv.lock /app/
 COPY mcpgateway/__init__.py /app/mcpgateway/__init__.py
 COPY mcpgateway/tools/builder/__init__.py /app/mcpgateway/tools/builder/__init__.py
 COPY mcpgateway/tools/builder/build_hooks.py /app/mcpgateway/tools/builder/build_hooks.py
@@ -281,7 +281,16 @@ COPY --chmod=0755 scripts/verify-native-extensions.py /tmp/verify-native-extensi
 # ----------------------------------------------------------------------------
 # Create and populate virtual environment
 #  - Upgrade pip, setuptools, wheel, uv
-#  - Install project dependencies and package
+#  - Install project dependencies and package FROM THE LOCKFILE (uv sync
+#    --frozen), not a fresh pyproject.toml resolve. pyproject.toml's own
+#    constraints are open-ended lower bounds (e.g. "mcp>=1.27.2"), so a plain
+#    `uv pip install ".[...]"` re-resolves against whatever is newest on PyPI
+#    at build time — confirmed 2026-08-10 to have silently picked up mcp
+#    2.0.0 (uv.lock pins 1.28.0), a major version that renamed McpError to
+#    MCPError and broke cpex's import of it, crash-looping the container on
+#    a routine rebuild with no application code change at all. --frozen uses
+#    uv.lock exactly as committed and fails loudly if it's out of sync with
+#    pyproject.toml, rather than silently resolving around the mismatch.
 #  - Include observability packages for OpenTelemetry support
 #  - Install plugins from PyPI (cpex-* packages)
 #  - Install local native extensions from pre-built wheels (if built)
@@ -298,11 +307,12 @@ RUN set -euo pipefail \
     && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel uv \
     && if [ -n "$(ls -A /tmp/wheels/*.whl 2>/dev/null)" ]; then \
         echo "📦 Hermetic install from prebuilt wheel closure"; \
-        /app/.venv/bin/uv pip install --no-index --find-links=/tmp/wheels ".[redis,observability,granian,plugins,llmchat]" "psycopg[c]>=3.3.3"; \
+        /app/.venv/bin/uv sync --frozen --no-dev --no-index --find-links=/tmp/wheels --extra redis --extra observability --extra granian --extra plugins --extra llmchat; \
+        /app/.venv/bin/uv pip install --no-index --find-links=/tmp/wheels "psycopg[c]>=3.3.3"; \
     else \
-        /app/.venv/bin/uv pip install ".[redis,postgres,observability,granian,plugins,llmchat]"; \
+        /app/.venv/bin/uv sync --frozen --no-dev --extra redis --extra postgres --extra observability --extra granian --extra plugins --extra llmchat; \
     fi \
-    && echo "✅ Plugins installed from PyPI via [plugins] extra" \
+    && echo "✅ Plugins installed from PyPI via [plugins] extra, pinned to uv.lock" \
     && if [ "$ENABLE_RUST" = "true" ] && ls "/tmp/local-native-extension-wheels/"*.whl 1> /dev/null 2>&1; then \
         echo "🦀 Installing local native extensions..."; \
         /app/.venv/bin/uv pip install --no-cache-dir "/tmp/local-native-extension-wheels/"*.whl && \
