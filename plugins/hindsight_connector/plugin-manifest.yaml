@@ -14,6 +14,12 @@ default_config:
   mcp_gateway_name: "hindsight-agent-memory"
   mcp_url: "http://host.docker.internal:8888/mcp/JARVIS/"
   http_base_url: "http://host.docker.internal:8888"
+  # Documentation only — the connector makes no outbound calls itself. Hindsight
+  # sits behind an authenticating Caddy proxy since 2026-08-05; the credential is
+  # carried by the hindsight-agent-memory gateway registration (auth_type
+  # "authheaders", header X-Api-Key). See memory/hindsight/Caddyfile.
+  api_key_env: "HINDSIGHT_PROXY_API_KEY"
+  auth_header_name: "X-Api-Key"
   hindsight_tools:
     - "retain"
     - "sync_retain"

@@ -51,6 +51,15 @@ class HindsightConnectorConfig(BaseModel):
     mcp_gateway_name: str = "hindsight-agent-memory"
     mcp_url: str = "http://host.docker.internal:8888/mcp/JARVIS/"
     http_base_url: str = "http://host.docker.internal:8888"
+    # Documentation only — this connector makes no outbound HTTP calls of its own
+    # (``tool_pre_invoke`` annotates routing metadata). Since 2026-08-05 Hindsight
+    # sits behind an authenticating Caddy proxy, and the credential that actually
+    # authorizes the upstream call is carried by the ``hindsight-agent-memory``
+    # gateway registration itself (auth_type ``authheaders``, header ``X-Api-Key``).
+    # Recorded here so the connector stays self-describing about which secret
+    # gates its route. See memory/hindsight/Caddyfile.
+    api_key_env: str = "HINDSIGHT_PROXY_API_KEY"
+    auth_header_name: str = "X-Api-Key"
     hindsight_tools: list[str] = Field(
         default_factory=lambda: [
             "retain",
