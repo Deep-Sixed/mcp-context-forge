@@ -3397,6 +3397,14 @@ Disallow: /
     rate_limit_lockout_threshold: int = Field(default=5, description="Violations before account lockout")
     rate_limit_lockout_duration_minutes: int = Field(default=15, description="Lockout duration in minutes")
 
+    # Trusted MCP Broker rate limiting profile
+    rate_limit_trusted_broker_identities: str = Field(
+        default="svc-evecor-mcp-broker@inbound.friday.internal",
+        description="Comma-separated email identities for trusted MCP broker service accounts",
+    )
+    rate_limit_broker_rpm: int = Field(default=10000, description="RPM limit for trusted MCP broker profile")
+    rate_limit_broker_burst: int = Field(default=10000, description="Burst allowance for trusted MCP broker profile")
+
     # RFC 6585 5: 431 Request Header Fields Too Large
     header_size_validation_enabled: bool = Field(default=True, description="Enable RFC 6585 header size validation (431 responses)")
     max_header_total_size_bytes: int = Field(default=16384, description="Maximum total size of all headers (16KB default)")

@@ -196,6 +196,23 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         return dimensions
 
+    def _is_trusted_broker_identity(self, request: Request) -> bool:
+        """Check if request is authenticated as a trusted MCP broker service account."""
+        user_email = getattr(request.state, "user_email", None)
+        if not user_email:
+            user = getattr(request.state, "user", None)
+            if user is not None:
+                user_email = getattr(user, "email", None)
+        if not user_email:
+            return False
+
+        trusted = [
+            i.strip()
+            for i in settings.rate_limit_trusted_broker_identities.split(",")
+            if i.strip()
+        ]
+        return user_email in trusted
+
     async def dispatch(self, request: Request, call_next):
         """Process request with rate limiting."""
         if not self.enabled:
@@ -205,35 +222,44 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if is_trusted_internal_mcp_request(request):
             return await call_next(request)
 
-        tier = self.get_endpoint_tier(request.url.path)
-        dimensions = self._get_client_dimensions(request)
+        is_broker = self._is_trusted_broker_identity(request)
 
+        tier = self.get_endpoint_tier(request.url.path)
         tier_name = self._get_tier_name(request.url.path)
 
-        # Check lockout first — a locked-out dimension blocks regardless of
-        # whether the sliding window has cleared.
-        locked_out_dims = []
-        for dimension in dimensions:
-            if await self._should_lockout(dimension, tier_name):
-                locked_out_dims.append(dimension)
+        if is_broker:
+            tier = {
+                "limit": max(tier["limit"], settings.rate_limit_broker_rpm),
+                "burst": max(tier.get("burst", 0), settings.rate_limit_broker_burst),
+            }
+            tier_name = "BROKER"
 
-        if locked_out_dims:
-            for dim in locked_out_dims:
-                self._log_security_event(
+        dimensions = self._get_client_dimensions(request)
+
+        # Check lockout first (exempt for trusted broker identity)
+        if not is_broker:
+            locked_out_dims = []
+            for dimension in dimensions:
+                if await self._should_lockout(dimension, tier_name):
+                    locked_out_dims.append(dimension)
+
+            if locked_out_dims:
+                for dim in locked_out_dims:
+                    self._log_security_event(
+                        request=request,
+                        dimension=dim,
+                        tier=tier,
+                        tier_name=tier_name,
+                        is_lockout=True,
+                    )
+
+                return self._create_rate_limit_response(
                     request=request,
-                    dimension=dim,
+                    dimensions=locked_out_dims,
                     tier=tier,
                     tier_name=tier_name,
                     is_lockout=True,
                 )
-
-            return self._create_rate_limit_response(
-                request=request,
-                dimensions=locked_out_dims,
-                tier=tier,
-                tier_name=tier_name,
-                is_lockout=True,
-            )
 
         violation_dims = []
         pre_check_results: Dict[str, Tuple[bool, int]] = {}
@@ -253,7 +279,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     tier_name=tier_name,
                     is_lockout=False,
                 )
-                await self._increment_violation(dim, tier_name)
+                if not is_broker:
+                    await self._increment_violation(dim, tier_name)
 
             return self._create_rate_limit_response(
                 request=request,
