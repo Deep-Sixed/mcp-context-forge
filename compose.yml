@@ -192,7 +192,7 @@ services:
     volumes:
       - ./plugins:/app/plugins:ro
       - /mnt/jarvis-data/projects/third-party/career-ops-main:/app/career-ops-host:ro
-      - /mnt/jarvis-data/projects/.state/routercore/dream:/home/appuser/.evecor/dream
+      - /mnt/jarvis-data/projects/EVECOR/memory/dreaming/storage:/home/appuser/.evecor/dream
       # Trusted CA bundle (certifi defaults + Friday box's internal Authentik TLS
       # CA) — bind-mounted over certifi's own path so every httpx/requests client
       # in the app picks it up with no code changes and no insecure verify flags.
